@@ -68,6 +68,14 @@ confluence-markdown \
 
 The tool supports saving credentials in a config file located at `~/.config/confluence-markdown/config.json`.
 
+### Initialize Config File
+
+Create an empty config file structure:
+```bash
+confluence-markdown --init-config
+```
+This creates `~/.config/confluence-markdown/config.json` with secure permissions (600).
+
 ### Save Configuration
 
 Save your credentials for easy reuse:
@@ -220,6 +228,7 @@ options:
   --prepend            Prepend content instead of append
 
 config options:
+  --init-config        Initialize empty config file structure
   --save-config        Save credentials to config file
   --config             Load credentials from config file
   --profile            Config profile name (default: "default")

@@ -417,6 +417,8 @@ def main():
                        help='List all saved config profiles')
     parser.add_argument('--delete-profile', action='store_true',
                        help='Delete a config profile')
+    parser.add_argument('--init-config', action='store_true',
+                       help='Initialize empty config file structure')
     
     args = parser.parse_args()
     
@@ -424,6 +426,17 @@ def main():
     config_manager = ConfigManager()
     
     # Handle config-only operations
+    if args.init_config:
+        config_manager.ensure_config_dir()
+        if not config_manager.config_file.exists():
+            with open(config_manager.config_file, 'w') as f:
+                json.dump({}, f, indent=2)
+            os.chmod(config_manager.config_file, 0o600)
+            print(f"✅ Created empty config file at: {config_manager.config_file}")
+        else:
+            print(f"ℹ️  Config file already exists at: {config_manager.config_file}")
+        sys.exit(0)
+    
     if args.list_profiles:
         profiles = config_manager.list_profiles()
         if profiles:
