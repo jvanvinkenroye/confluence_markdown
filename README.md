@@ -14,14 +14,30 @@ A Python tool to download, read, and update Confluence Data Center pages with ma
 
 ## Installation
 
-1. Install dependencies using uv:
+### Using uv (recommended)
+
 ```bash
+# Clone the repository
+git clone <repository-url>
+cd confluence-markdown
+
+# Install with uv
 uv sync
+
+# Run with uv
+uv run confluence-markdown --help
 ```
 
-Or with pip:
+### Using pip
+
 ```bash
-pip install requests markdownify beautifulsoup4
+# Clone and install
+git clone <repository-url>
+cd confluence-markdown
+pip install .
+
+# Run directly
+confluence-markdown --help
 ```
 
 ## Authentication Methods
@@ -30,7 +46,7 @@ pip install requests markdownify beautifulsoup4
 
 For Confluence Data Center, use your PAT with your username:
 ```bash
-python confluence_markdown_tool.py \
+confluence-markdown \
   --base-url https://confluence.company.com \
   --username YOUR_USERNAME \
   --token YOUR_PAT \
@@ -41,7 +57,7 @@ python confluence_markdown_tool.py \
 
 For older versions or if PAT is not available:
 ```bash
-python confluence_markdown_tool.py \
+confluence-markdown \
   --base-url https://confluence.company.com \
   --username YOUR_USERNAME \
   --password YOUR_PASSWORD_OR_API_TOKEN \
@@ -57,7 +73,7 @@ The tool supports saving credentials in a config file located at `~/.config/conf
 Save your credentials for easy reuse:
 ```bash
 # Save config with PAT
-python confluence_markdown_tool.py \
+confluence-markdown \
   --base-url https://confluence.company.com \
   --username YOUR_USERNAME \
   --token YOUR_PAT \
@@ -65,7 +81,7 @@ python confluence_markdown_tool.py \
   --action test-auth
 
 # Save config with password (interactive prompt)
-python confluence_markdown_tool.py \
+confluence-markdown \
   --base-url https://confluence.company.com \
   --username YOUR_USERNAME \
   --save-config \
@@ -77,10 +93,10 @@ python confluence_markdown_tool.py \
 Once saved, use the config without re-entering credentials:
 ```bash
 # Use default profile
-python confluence_markdown_tool.py --config URL
+confluence-markdown --config URL
 
 # Use specific profile
-python confluence_markdown_tool.py --config --profile work URL
+confluence-markdown --config --profile work URL
 ```
 
 ### Manage Profiles
@@ -88,7 +104,7 @@ python confluence_markdown_tool.py --config --profile work URL
 Create multiple profiles for different Confluence instances:
 ```bash
 # Save to specific profile
-python confluence_markdown_tool.py \
+confluence-markdown \
   --base-url https://work.confluence.com \
   --username work_user \
   --token WORK_TOKEN \
@@ -97,10 +113,10 @@ python confluence_markdown_tool.py \
   --action test-auth
 
 # List all profiles
-python confluence_markdown_tool.py --list-profiles
+confluence-markdown --list-profiles
 
 # Delete a profile
-python confluence_markdown_tool.py --delete-profile --profile old_profile
+confluence-markdown --delete-profile --profile old_profile
 ```
 
 ## Usage Examples
@@ -109,7 +125,7 @@ python confluence_markdown_tool.py --delete-profile --profile old_profile
 
 Verify your credentials are working:
 ```bash
-python confluence_markdown_tool.py \
+confluence-markdown \
   --base-url https://confluence.company.com \
   --username YOUR_USERNAME \
   --token YOUR_PAT \
@@ -120,7 +136,7 @@ python confluence_markdown_tool.py \
 
 Download a Confluence page and save as markdown:
 ```bash
-python confluence_markdown_tool.py \
+confluence-markdown \
   --base-url https://confluence.company.com \
   --username YOUR_USERNAME \
   --token YOUR_PAT \
@@ -132,7 +148,7 @@ python confluence_markdown_tool.py \
 
 Display page content in terminal without saving:
 ```bash
-python confluence_markdown_tool.py \
+confluence-markdown \
   --base-url https://confluence.company.com \
   --username YOUR_USERNAME \
   --token YOUR_PAT \
@@ -144,7 +160,7 @@ python confluence_markdown_tool.py \
 
 Append markdown content to an existing page:
 ```bash
-python confluence_markdown_tool.py \
+confluence-markdown \
   --base-url https://confluence.company.com \
   --username YOUR_USERNAME \
   --token YOUR_PAT \
@@ -155,7 +171,7 @@ python confluence_markdown_tool.py \
 
 Prepend content instead:
 ```bash
-python confluence_markdown_tool.py \
+confluence-markdown \
   --base-url https://confluence.company.com \
   --username YOUR_USERNAME \
   --token YOUR_PAT \
@@ -167,7 +183,7 @@ python confluence_markdown_tool.py \
 
 Add HTML content directly:
 ```bash
-python confluence_markdown_tool.py \
+confluence-markdown \
   --base-url https://confluence.company.com \
   --username YOUR_USERNAME \
   --token YOUR_PAT \

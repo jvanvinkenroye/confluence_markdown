@@ -1,0 +1,68 @@
+"""Tests for the main confluence-markdown functionality."""
+
+import pytest
+from pathlib import Path
+from confluence_markdown.main import ConfluenceClient, ConfigManager
+
+
+def test_config_manager_init():
+    """Test ConfigManager initialization."""
+    config = ConfigManager()
+    assert config.config_dir == Path.home() / '.config' / 'confluence-markdown'
+    assert config.config_file == config.config_dir / 'config.json'
+
+
+def test_url_parsing():
+    """Test URL parsing functionality."""
+    client = ConfluenceClient(
+        base_url="https://example.confluence.com",
+        token="test-token"
+    )
+    
+    # Test different URL formats
+    test_cases = [
+        ("https://example.com/pages/viewpage.action?pageId=123456", "123456"),
+        ("https://example.com/spaces/SPACE/pages/123456/Page+Title", "123456"),
+    ]
+    
+    for url, expected_id in test_cases:
+        result = client._extract_page_id_from_url(url)
+        assert result == expected_id, f"Failed to parse {url}"
+
+
+def test_client_initialization_with_token():
+    """Test client initialization with token."""
+    client = ConfluenceClient(
+        base_url="https://example.com",
+        token="test-token"
+    )
+    assert client.base_url == "https://example.com"
+    assert 'Authorization' in client.session.headers
+
+
+def test_client_initialization_with_username_password():
+    """Test client initialization with username/password."""
+    client = ConfluenceClient(
+        base_url="https://example.com",
+        username="test-user",
+        password="test-pass"
+    )
+    assert client.base_url == "https://example.com"
+    assert 'Authorization' in client.session.headers
+
+
+def test_client_initialization_with_username_and_token():
+    """Test client initialization with username and token (PAT mode)."""
+    client = ConfluenceClient(
+        base_url="https://example.com",
+        username="test-user",
+        token="test-token"
+    )
+    assert client.base_url == "https://example.com"
+    assert 'Authorization' in client.session.headers
+
+
+def test_client_initialization_fails_without_auth():
+    """Test client initialization fails without authentication."""
+    with pytest.raises(ValueError, match="Either token or username/password must be provided"):
+        ConfluenceClient(base_url="https://example.com")
