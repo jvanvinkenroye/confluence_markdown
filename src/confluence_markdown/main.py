@@ -21,6 +21,7 @@ import getpass
 import tempfile
 import subprocess
 import shutil
+import markdown
 
 
 class ConfluenceClient:
@@ -299,26 +300,11 @@ class ConfluenceClient:
         return markdown.strip()
     
     def _markdown_to_html(self, markdown_content: str) -> str:
-        """Simple markdown to HTML conversion for basic formatting."""
-        # This is a simple implementation - for production use, consider using markdown library
-        html = markdown_content
-        
-        # Convert headers
-        html = html.replace('# ', '<h1>').replace('\n', '</h1>\n', 1) if '# ' in html else html
-        html = html.replace('## ', '<h2>').replace('\n', '</h2>\n', 1) if '## ' in html else html
-        html = html.replace('### ', '<h3>').replace('\n', '</h3>\n', 1) if '### ' in html else html
-        
-        # Convert paragraphs
-        lines = html.split('\n')
-        formatted_lines = []
-        for line in lines:
-            line = line.strip()
-            if line and not line.startswith('<'):
-                formatted_lines.append(f'<p>{line}</p>')
-            else:
-                formatted_lines.append(line)
-        
-        return '\n'.join(formatted_lines)
+        """Convert markdown to HTML using proper markdown parser."""
+        # Use markdown library with table support
+        md = markdown.Markdown(extensions=['tables', 'fenced_code'])
+        html_content = md.convert(markdown_content)
+        return html_content
     
     def edit_page_with_editor(self, page_url: str) -> dict:
         """
