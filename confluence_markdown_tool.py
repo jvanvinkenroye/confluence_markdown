@@ -1,0 +1,399 @@
+#!/usr/bin/env python3
+"""
+Confluence Data Center Markdown Tool
+
+A script to download, read, and add content to Confluence Data Center pages.
+Supports both API token and Personal Access Token authentication.
+"""
+
+import argparse
+import os
+import sys
+from typing import Optional
+import requests
+from urllib.parse import urljoin, urlparse
+import base64
+from markdownify import markdownify
+from bs4 import BeautifulSoup
+
+
+class ConfluenceClient:
+    """Client for Confluence Data Center API operations."""
+    
+    def __init__(self, base_url: str, username: Optional[str] = None, 
+                 password: Optional[str] = None, token: Optional[str] = None):
+        """
+        Initialize Confluence client.
+        
+        Args:
+            base_url: Confluence Data Center base URL
+            username: Username for basic auth (used with password)
+            password: Password or API token for basic auth
+            token: Personal Access Token for bearer auth
+        """
+        self.base_url = base_url.rstrip('/')
+        self.api_base = f"{self.base_url}/rest/api"
+        self.session = requests.Session()
+        
+        # Set up authentication
+        if token:
+            # For Confluence Data Center, PATs might need to be used as Basic auth
+            # Try different token authentication methods
+            if username:
+                # Method 1: Token as password with username (common for DC)
+                auth_string = base64.b64encode(f"{username}:{token}".encode()).decode()
+                self.session.headers.update({'Authorization': f'Basic {auth_string}'})
+                print(f"DEBUG: Using token as password with username: {username}")
+            else:
+                # Method 2: Bearer token (OAuth style)
+                self.session.headers.update({'Authorization': f'Bearer {token}'})
+                print(f"DEBUG: Using Bearer token authentication")
+        elif username and password:
+            # Regular username/password authentication
+            auth_string = base64.b64encode(f"{username}:{password}".encode()).decode()
+            self.session.headers.update({'Authorization': f'Basic {auth_string}'})
+            self.session.auth = (username, password)  # Add this for requests library
+            print(f"DEBUG: Using Basic authentication with username: {username}")
+        else:
+            raise ValueError("Either token or username/password must be provided")
+        
+        self.session.headers.update({
+            'Content-Type': 'application/json',
+            'Accept': 'application/json'
+        })
+    
+    def test_authentication(self) -> dict:
+        """Test authentication by getting current user info."""
+        url = f"{self.api_base}/user/current"
+        print(f"DEBUG: Testing authentication at: {url}")
+        
+        response = self.session.get(url)
+        print(f"DEBUG: Auth test status: {response.status_code}")
+        print(f"DEBUG: Auth test response: {response.text[:500]}")
+        
+        if response.status_code == 200:
+            return response.json()
+        else:
+            return {"error": f"HTTP {response.status_code}", "response": response.text}
+    
+    def get_page_by_url(self, page_url: str) -> dict:
+        """
+        Get page content by URL.
+        
+        Args:
+            page_url: Full URL to the Confluence page
+            
+        Returns:
+            Page data dictionary
+        """
+        # Extract page ID from URL
+        page_id = self._extract_page_id_from_url(page_url)
+        if not page_id:
+            raise ValueError(f"Could not extract page ID from URL: {page_url}")
+        
+        return self.get_page_content(page_id)
+    
+    def get_page_content(self, page_id: str) -> dict:
+        """
+        Get page content by ID.
+        
+        Args:
+            page_id: Confluence page ID
+            
+        Returns:
+            Page data dictionary
+        """
+        url = f"{self.api_base}/content/{page_id}"
+        params = {
+            'expand': 'body.storage,space,version,ancestors'
+        }
+        
+        print(f"DEBUG: Making request to: {url}")
+        print(f"DEBUG: Request params: {params}")
+        print(f"DEBUG: Using headers: {dict(self.session.headers)}")
+        
+        response = self.session.get(url, params=params)
+        
+        print(f"DEBUG: Response status code: {response.status_code}")
+        print(f"DEBUG: Response headers: {dict(response.headers)}")
+        print(f"DEBUG: Response content (first 500 chars): {response.text[:500]}")
+        
+        if response.status_code != 200:
+            print(f"ERROR: HTTP {response.status_code}")
+            print(f"ERROR: Full response: {response.text}")
+            response.raise_for_status()
+        
+        try:
+            return response.json()
+        except Exception as e:
+            print(f"ERROR: Failed to parse JSON response: {e}")
+            print(f"ERROR: Full response text: {response.text}")
+            raise
+    
+    def download_as_markdown(self, page_url: str, output_file: Optional[str] = None) -> str:
+        """
+        Download page content and convert to markdown.
+        
+        Args:
+            page_url: Full URL to the Confluence page
+            output_file: Optional file path to save markdown
+            
+        Returns:
+            Markdown content as string
+        """
+        page_data = self.get_page_by_url(page_url)
+        
+        # Extract HTML content
+        html_content = page_data['body']['storage']['value']
+        
+        # Convert HTML to Markdown
+        markdown_content = self._html_to_markdown(html_content)
+        
+        # Add metadata header
+        metadata = f"""# {page_data['title']}
+
+**Space:** {page_data['space']['name']}  
+**Page ID:** {page_data['id']}  
+**Version:** {page_data['version']['number']}  
+**URL:** {self.base_url}/pages/viewpage.action?pageId={page_data['id']}
+
+---
+
+"""
+        
+        full_markdown = metadata + markdown_content
+        
+        # Save to file if specified
+        if output_file:
+            with open(output_file, 'w', encoding='utf-8') as f:
+                f.write(full_markdown)
+            print(f"Content saved to: {output_file}")
+        
+        return full_markdown
+    
+    def read_page_content(self, page_url: str) -> dict:
+        """
+        Read page content and return structured data.
+        
+        Args:
+            page_url: Full URL to the Confluence page
+            
+        Returns:
+            Dictionary with page information
+        """
+        page_data = self.get_page_by_url(page_url)
+        
+        return {
+            'id': page_data['id'],
+            'title': page_data['title'],
+            'space': page_data['space']['name'],
+            'space_key': page_data['space']['key'],
+            'version': page_data['version']['number'],
+            'html_content': page_data['body']['storage']['value'],
+            'markdown_content': self._html_to_markdown(page_data['body']['storage']['value']),
+            'url': f"{self.base_url}/pages/viewpage.action?pageId={page_data['id']}"
+        }
+    
+    def add_content_to_page(self, page_url: str, content: str, 
+                           append: bool = True, content_type: str = 'markdown') -> dict:
+        """
+        Add content to an existing page.
+        
+        Args:
+            page_url: Full URL to the Confluence page
+            content: Content to add (markdown or HTML)
+            append: If True, append to existing content; if False, prepend
+            content_type: 'markdown' or 'html'
+            
+        Returns:
+            Updated page data
+        """
+        page_data = self.get_page_by_url(page_url)
+        
+        # Convert markdown to HTML if needed
+        if content_type == 'markdown':
+            # Simple markdown to HTML conversion
+            html_content = self._markdown_to_html(content)
+        else:
+            html_content = content
+        
+        # Get current content
+        current_content = page_data['body']['storage']['value']
+        
+        # Combine content
+        if append:
+            new_content = current_content + '\n' + html_content
+        else:
+            new_content = html_content + '\n' + current_content
+        
+        # Update page
+        update_data = {
+            'version': {
+                'number': page_data['version']['number'] + 1
+            },
+            'title': page_data['title'],
+            'type': 'page',
+            'body': {
+                'storage': {
+                    'value': new_content,
+                    'representation': 'storage'
+                }
+            }
+        }
+        
+        url = f"{self.api_base}/content/{page_data['id']}"
+        response = self.session.put(url, json=update_data)
+        response.raise_for_status()
+        
+        return response.json()
+    
+    def _extract_page_id_from_url(self, page_url: str) -> Optional[str]:
+        """Extract page ID from Confluence URL."""
+        print(f"DEBUG: Extracting page ID from URL: {page_url}")
+        parsed = urlparse(page_url)
+        print(f"DEBUG: Parsed URL - path: {parsed.path}, query: {parsed.query}")
+        
+        # Handle different URL formats
+        if 'pageId=' in parsed.query:
+            # Format: /pages/viewpage.action?pageId=123456
+            for param in parsed.query.split('&'):
+                if param.startswith('pageId='):
+                    page_id = param.split('=')[1]
+                    print(f"DEBUG: Found page ID from query param: {page_id}")
+                    return page_id
+        
+        # Handle other URL formats by trying to extract from path
+        path_parts = parsed.path.split('/')
+        print(f"DEBUG: Path parts: {path_parts}")
+        for i, part in enumerate(path_parts):
+            if part == 'pages' and i + 1 < len(path_parts):
+                # Look for numeric page ID in the next parts
+                for j in range(i + 1, len(path_parts)):
+                    if path_parts[j].isdigit():
+                        page_id = path_parts[j]
+                        print(f"DEBUG: Found page ID from path: {page_id}")
+                        return page_id
+        
+        print(f"DEBUG: No page ID found in URL")
+        return None
+    
+    def _html_to_markdown(self, html_content: str) -> str:
+        """Convert HTML to Markdown."""
+        # Clean up HTML first
+        soup = BeautifulSoup(html_content, 'html.parser')
+        
+        # Convert to markdown
+        markdown = markdownify(
+            str(soup),
+            heading_style="ATX",
+            bullets="-",
+            strip=['script', 'style']
+        )
+        
+        return markdown.strip()
+    
+    def _markdown_to_html(self, markdown_content: str) -> str:
+        """Simple markdown to HTML conversion for basic formatting."""
+        # This is a simple implementation - for production use, consider using markdown library
+        html = markdown_content
+        
+        # Convert headers
+        html = html.replace('# ', '<h1>').replace('\n', '</h1>\n', 1) if '# ' in html else html
+        html = html.replace('## ', '<h2>').replace('\n', '</h2>\n', 1) if '## ' in html else html
+        html = html.replace('### ', '<h3>').replace('\n', '</h3>\n', 1) if '### ' in html else html
+        
+        # Convert paragraphs
+        lines = html.split('\n')
+        formatted_lines = []
+        for line in lines:
+            line = line.strip()
+            if line and not line.startswith('<'):
+                formatted_lines.append(f'<p>{line}</p>')
+            else:
+                formatted_lines.append(line)
+        
+        return '\n'.join(formatted_lines)
+
+
+def main():
+    """Main CLI function."""
+    parser = argparse.ArgumentParser(description='Confluence Data Center Markdown Tool')
+    parser.add_argument('url', nargs='?', help='Confluence page URL (not required for test-auth)')
+    parser.add_argument('--base-url', required=True, help='Confluence base URL')
+    parser.add_argument('--username', help='Username (for basic auth)')
+    parser.add_argument('--password', help='Password or API token (for basic auth)')
+    parser.add_argument('--token', help='Personal Access Token (for bearer auth)')
+    parser.add_argument('--output', '-o', help='Output file for markdown')
+    parser.add_argument('--action', choices=['download', 'read', 'add', 'test-auth'], 
+                       default='download', help='Action to perform')
+    parser.add_argument('--content', help='Content to add (for add action)')
+    parser.add_argument('--content-type', choices=['markdown', 'html'], 
+                       default='markdown', help='Type of content to add')
+    parser.add_argument('--append', action='store_true', default=True,
+                       help='Append content (default: True)')
+    parser.add_argument('--prepend', dest='append', action='store_false',
+                       help='Prepend content instead of append')
+    
+    args = parser.parse_args()
+    
+    # Validate authentication
+    if not args.token and not (args.username and args.password):
+        print("Error: Either --token or --username/--password must be provided")
+        sys.exit(1)
+    
+    try:
+        # Initialize client
+        client = ConfluenceClient(
+            base_url=args.base_url,
+            username=args.username,
+            password=args.password,
+            token=args.token
+        )
+        
+        if args.action == 'test-auth':
+            print("Testing authentication...")
+            auth_result = client.test_authentication()
+            if "error" not in auth_result:
+                print(f"✅ Authentication successful!")
+                print(f"   User: {auth_result.get('displayName', 'Unknown')}")
+                print(f"   Username: {auth_result.get('username', 'Unknown')}")
+                print(f"   User Key: {auth_result.get('userKey', 'Unknown')}")
+            else:
+                print(f"❌ Authentication failed: {auth_result['error']}")
+                return
+        
+        elif args.action == 'download':
+            markdown_content = client.download_as_markdown(args.url, args.output)
+            if not args.output:
+                print(markdown_content)
+        
+        elif args.action == 'read':
+            page_info = client.read_page_content(args.url)
+            print(f"Title: {page_info['title']}")
+            print(f"Space: {page_info['space']} ({page_info['space_key']})")
+            print(f"Version: {page_info['version']}")
+            print(f"URL: {page_info['url']}")
+            print("\nMarkdown Content:")
+            print("=" * 50)
+            print(page_info['markdown_content'])
+        
+        elif args.action == 'add':
+            if not args.content:
+                print("Error: --content is required for add action")
+                sys.exit(1)
+            
+            result = client.add_content_to_page(
+                args.url, 
+                args.content,
+                append=args.append,
+                content_type=args.content_type
+            )
+            print(f"Content added successfully. New version: {result['version']['number']}")
+        
+    except Exception as e:
+        print(f"Error: {e}")
+        sys.exit(1)
+
+
+if __name__ == '__main__':
+    main()
