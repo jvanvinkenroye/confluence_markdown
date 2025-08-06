@@ -429,10 +429,25 @@ def main():
     if args.init_config:
         config_manager.ensure_config_dir()
         if not config_manager.config_file.exists():
+            # Create config with example entries
+            example_config = {
+                "default": {
+                    "base_url": "https://confluence.example.com",
+                    "username": "your-username",
+                    "token": "YOUR_PERSONAL_ACCESS_TOKEN_HERE"
+                },
+                "work": {
+                    "base_url": "https://work.confluence.com", 
+                    "username": "work-user",
+                    "token": "WORK_TOKEN_HERE"
+                }
+            }
             with open(config_manager.config_file, 'w') as f:
-                json.dump({}, f, indent=2)
+                json.dump(example_config, f, indent=2)
             os.chmod(config_manager.config_file, 0o600)
-            print(f"✅ Created empty config file at: {config_manager.config_file}")
+            print(f"✅ Created config file with example entries at: {config_manager.config_file}")
+            print(f"   Edit the file to add your actual credentials")
+            print(f"   Example profiles created: 'default' and 'work'")
         else:
             print(f"ℹ️  Config file already exists at: {config_manager.config_file}")
         sys.exit(0)
