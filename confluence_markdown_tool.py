@@ -9,12 +9,15 @@ Supports both API token and Personal Access Token authentication.
 import argparse
 import os
 import sys
-from typing import Optional
+from typing import Optional, Dict, Any
 import requests
 from urllib.parse import urljoin, urlparse
 import base64
 from markdownify import markdownify
 from bs4 import BeautifulSoup
+import json
+from pathlib import Path
+import getpass
 
 
 class ConfluenceClient:
@@ -315,11 +318,80 @@ class ConfluenceClient:
         return '\n'.join(formatted_lines)
 
 
+class ConfigManager:
+    """Manages configuration file for Confluence credentials."""
+    
+    def __init__(self):
+        self.config_dir = Path.home() / '.config' / 'confluence-markdown'
+        self.config_file = self.config_dir / 'config.json'
+        
+    def ensure_config_dir(self):
+        """Create config directory if it doesn't exist."""
+        self.config_dir.mkdir(parents=True, exist_ok=True)
+        # Set restrictive permissions (user read/write only)
+        os.chmod(self.config_dir, 0o700)
+    
+    def save_config(self, config: Dict[str, Any], profile: str = 'default'):
+        """Save configuration to file."""
+        self.ensure_config_dir()
+        
+        # Load existing config or create new
+        existing_config = self.load_all_configs()
+        existing_config[profile] = config
+        
+        # Write config file with restrictive permissions
+        with open(self.config_file, 'w') as f:
+            json.dump(existing_config, f, indent=2)
+        os.chmod(self.config_file, 0o600)
+        
+        print(f"✅ Configuration saved to {self.config_file} (profile: {profile})")
+    
+    def load_config(self, profile: str = 'default') -> Optional[Dict[str, Any]]:
+        """Load configuration from file."""
+        if not self.config_file.exists():
+            return None
+        
+        try:
+            with open(self.config_file, 'r') as f:
+                all_configs = json.load(f)
+                return all_configs.get(profile)
+        except Exception as e:
+            print(f"Warning: Failed to load config: {e}")
+            return None
+    
+    def load_all_configs(self) -> Dict[str, Dict[str, Any]]:
+        """Load all configuration profiles."""
+        if not self.config_file.exists():
+            return {}
+        
+        try:
+            with open(self.config_file, 'r') as f:
+                return json.load(f)
+        except Exception:
+            return {}
+    
+    def list_profiles(self) -> list:
+        """List all available configuration profiles."""
+        configs = self.load_all_configs()
+        return list(configs.keys())
+    
+    def delete_profile(self, profile: str):
+        """Delete a configuration profile."""
+        configs = self.load_all_configs()
+        if profile in configs:
+            del configs[profile]
+            with open(self.config_file, 'w') as f:
+                json.dump(configs, f, indent=2)
+            print(f"✅ Profile '{profile}' deleted")
+        else:
+            print(f"❌ Profile '{profile}' not found")
+
+
 def main():
     """Main CLI function."""
     parser = argparse.ArgumentParser(description='Confluence Data Center Markdown Tool')
-    parser.add_argument('url', nargs='?', help='Confluence page URL (not required for test-auth)')
-    parser.add_argument('--base-url', required=True, help='Confluence base URL')
+    parser.add_argument('url', nargs='?', help='Confluence page URL (not required for test-auth or config operations)')
+    parser.add_argument('--base-url', help='Confluence base URL')
     parser.add_argument('--username', help='Username (for basic auth)')
     parser.add_argument('--password', help='Password or API token (for basic auth)')
     parser.add_argument('--token', help='Personal Access Token (for bearer auth)')
@@ -334,11 +406,84 @@ def main():
     parser.add_argument('--prepend', dest='append', action='store_false',
                        help='Prepend content instead of append')
     
+    # Config file options
+    parser.add_argument('--save-config', action='store_true',
+                       help='Save credentials to config file')
+    parser.add_argument('--config', action='store_true',
+                       help='Load credentials from config file')
+    parser.add_argument('--profile', default='default',
+                       help='Config profile name (default: "default")')
+    parser.add_argument('--list-profiles', action='store_true',
+                       help='List all saved config profiles')
+    parser.add_argument('--delete-profile', action='store_true',
+                       help='Delete a config profile')
+    
     args = parser.parse_args()
+    
+    # Initialize config manager
+    config_manager = ConfigManager()
+    
+    # Handle config-only operations
+    if args.list_profiles:
+        profiles = config_manager.list_profiles()
+        if profiles:
+            print("Available profiles:")
+            for profile in profiles:
+                config = config_manager.load_config(profile)
+                print(f"  - {profile} (base_url: {config.get('base_url', 'N/A')})")
+        else:
+            print("No saved profiles found")
+        sys.exit(0)
+    
+    if args.delete_profile:
+        config_manager.delete_profile(args.profile)
+        sys.exit(0)
+    
+    # Load config if requested
+    if args.config:
+        config = config_manager.load_config(args.profile)
+        if config:
+            print(f"📋 Loading config from profile: {args.profile}")
+            args.base_url = args.base_url or config.get('base_url')
+            args.username = args.username or config.get('username')
+            args.password = args.password or config.get('password')
+            args.token = args.token or config.get('token')
+        else:
+            print(f"❌ No config found for profile: {args.profile}")
+            print(f"   Create one with --save-config")
+            sys.exit(1)
+    
+    # Check if base_url is provided (required unless loading from config)
+    if not args.base_url:
+        print("Error: --base-url is required (or use --config to load from saved profile)")
+        sys.exit(1)
+    
+    # Save config if requested
+    if args.save_config:
+        # Prompt for password if not provided
+        if args.username and not args.password and not args.token:
+            args.password = getpass.getpass(f"Password for {args.username}: ")
+        
+        config_data = {
+            'base_url': args.base_url,
+            'username': args.username,
+        }
+        
+        # Save either token or password (not both)
+        if args.token:
+            config_data['token'] = args.token
+        elif args.password:
+            # Optionally prompt to confirm saving password
+            save_pass = input("Save password in config? (y/N): ").lower() == 'y'
+            if save_pass:
+                config_data['password'] = args.password
+        
+        config_manager.save_config(config_data, args.profile)
     
     # Validate authentication
     if not args.token and not (args.username and args.password):
         print("Error: Either --token or --username/--password must be provided")
+        print("       (or use --config to load from saved profile)")
         sys.exit(1)
     
     try:

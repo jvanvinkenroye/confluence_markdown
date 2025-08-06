@@ -8,6 +8,8 @@ A Python tool to download, read, and update Confluence Data Center pages with ma
 - Read page content directly in terminal
 - Add content to existing pages (markdown or HTML)
 - Support for multiple authentication methods
+- Save credentials in config file for easy reuse
+- Support for multiple configuration profiles
 - Debug mode for troubleshooting
 
 ## Installation
@@ -44,6 +46,61 @@ python confluence_markdown_tool.py \
   --username YOUR_USERNAME \
   --password YOUR_PASSWORD_OR_API_TOKEN \
   URL
+```
+
+## Configuration File Support
+
+The tool supports saving credentials in a config file located at `~/.config/confluence-markdown/config.json`.
+
+### Save Configuration
+
+Save your credentials for easy reuse:
+```bash
+# Save config with PAT
+python confluence_markdown_tool.py \
+  --base-url https://confluence.company.com \
+  --username YOUR_USERNAME \
+  --token YOUR_PAT \
+  --save-config \
+  --action test-auth
+
+# Save config with password (interactive prompt)
+python confluence_markdown_tool.py \
+  --base-url https://confluence.company.com \
+  --username YOUR_USERNAME \
+  --save-config \
+  --action test-auth
+```
+
+### Use Saved Configuration
+
+Once saved, use the config without re-entering credentials:
+```bash
+# Use default profile
+python confluence_markdown_tool.py --config URL
+
+# Use specific profile
+python confluence_markdown_tool.py --config --profile work URL
+```
+
+### Manage Profiles
+
+Create multiple profiles for different Confluence instances:
+```bash
+# Save to specific profile
+python confluence_markdown_tool.py \
+  --base-url https://work.confluence.com \
+  --username work_user \
+  --token WORK_TOKEN \
+  --save-config \
+  --profile work \
+  --action test-auth
+
+# List all profiles
+python confluence_markdown_tool.py --list-profiles
+
+# Delete a profile
+python confluence_markdown_tool.py --delete-profile --profile old_profile
 ```
 
 ## Usage Examples
@@ -131,11 +188,11 @@ The tool supports various Confluence URL formats:
 
 ```
 positional arguments:
-  url                   Confluence page URL (optional for test-auth)
+  url                   Confluence page URL (optional for test-auth/config ops)
 
 options:
   -h, --help           Show help message
-  --base-url           Confluence base URL (required)
+  --base-url           Confluence base URL (required unless using --config)
   --username           Username for authentication
   --password           Password or API token
   --token              Personal Access Token (use with username for DC)
@@ -145,19 +202,26 @@ options:
   --content-type       Content type: markdown (default) or html
   --append             Append content (default: True)
   --prepend            Prepend content instead of append
+
+config options:
+  --save-config        Save credentials to config file
+  --config             Load credentials from config file
+  --profile            Config profile name (default: "default")
+  --list-profiles      List all saved config profiles
+  --delete-profile     Delete a config profile
 ```
 
 ## Getting Credentials
 
 ### Personal Access Token (Confluence DC 7.9+)
 1. Log into Confluence
-2. Click profile picture ’ **Personal Access Tokens**
+2. Click profile picture ï¿½ **Personal Access Tokens**
 3. Create token with appropriate permissions
 4. Save the token securely
 
 ### API Token (older versions)
 1. Log into Confluence
-2. Go to Account Settings ’ Security
+2. Go to Account Settings ï¿½ Security
 3. Create API token
 4. Use with your username
 
