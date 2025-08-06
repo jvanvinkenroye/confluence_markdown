@@ -263,4 +263,4 @@ If you encounter authentication errors:
 
 ## License
 
-MIT
+WTFPL - Do What The Fuck You Want To Public License
