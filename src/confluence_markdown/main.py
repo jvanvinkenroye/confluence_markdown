@@ -18,6 +18,9 @@ from bs4 import BeautifulSoup
 import json
 from pathlib import Path
 import getpass
+import tempfile
+import subprocess
+import shutil
 
 
 class ConfluenceClient:
@@ -316,6 +319,124 @@ class ConfluenceClient:
                 formatted_lines.append(line)
         
         return '\n'.join(formatted_lines)
+    
+    def edit_page_with_editor(self, page_url: str) -> dict:
+        """
+        Edit page content using system editor.
+        
+        Args:
+            page_url: Full URL to the Confluence page
+            
+        Returns:
+            Updated page data
+        """
+        # Get current page content
+        page_data = self.get_page_by_url(page_url)
+        current_markdown = self._html_to_markdown(page_data['body']['storage']['value'])
+        
+        # Create temporary file with current content
+        with tempfile.NamedTemporaryFile(mode='w', suffix='.md', delete=False) as temp_file:
+            temp_file.write(f"# {page_data['title']}\n\n")
+            temp_file.write("<!-- Edit the content below. Lines starting with <!-- are comments and will be ignored -->\n")
+            temp_file.write(f"<!-- Page ID: {page_data['id']}, Version: {page_data['version']['number']} -->\n\n")
+            temp_file.write(current_markdown)
+            temp_file_path = temp_file.name
+        
+        try:
+            # Detect editor
+            editor = self._get_editor()
+            
+            print(f"Opening editor: {editor}")
+            print(f"Editing page: {page_data['title']}")
+            print("Save and close the editor to upload changes, or exit without saving to cancel.")
+            
+            # Get original file modification time
+            original_mtime = os.path.getmtime(temp_file_path)
+            
+            # Open editor
+            result = subprocess.run([editor, temp_file_path])
+            
+            if result.returncode != 0:
+                print("Editor exited with error code. Cancelling upload.")
+                return None
+            
+            # Check if file was modified
+            new_mtime = os.path.getmtime(temp_file_path)
+            if new_mtime == original_mtime:
+                print("File was not modified. No changes to upload.")
+                return None
+            
+            # Read edited content
+            with open(temp_file_path, 'r') as f:
+                edited_content = f.read()
+            
+            # Remove metadata comments and title
+            lines = edited_content.split('\n')
+            content_lines = []
+            skip_title = True
+            
+            for line in lines:
+                if line.startswith('<!--') and '-->' in line:
+                    continue  # Skip comment lines
+                if skip_title and line.startswith('# '):
+                    skip_title = False
+                    continue  # Skip title line
+                content_lines.append(line)
+            
+            # Join and clean up
+            cleaned_content = '\n'.join(content_lines).strip()
+            
+            # Convert markdown back to HTML for Confluence
+            html_content = self._markdown_to_html(cleaned_content)
+            
+            # Update page
+            update_data = {
+                'version': {
+                    'number': page_data['version']['number'] + 1
+                },
+                'title': page_data['title'],
+                'type': 'page',
+                'body': {
+                    'storage': {
+                        'value': html_content,
+                        'representation': 'storage'
+                    }
+                }
+            }
+            
+            url = f"{self.api_base}/content/{page_data['id']}"
+            response = self.session.put(url, json=update_data)
+            response.raise_for_status()
+            
+            print(f"✅ Page updated successfully!")
+            print(f"   New version: {update_data['version']['number']}")
+            
+            return response.json()
+            
+        finally:
+            # Clean up temporary file
+            if os.path.exists(temp_file_path):
+                os.unlink(temp_file_path)
+    
+    def _get_editor(self) -> str:
+        """Get the preferred editor from environment or defaults."""
+        # Try EDITOR environment variable first
+        editor = os.environ.get('EDITOR')
+        if editor and shutil.which(editor):
+            return editor
+        
+        # Try common editors
+        editors = ['code', 'vim', 'nano', 'emacs', 'gedit', 'notepad++']
+        
+        for ed in editors:
+            if shutil.which(ed):
+                return ed
+        
+        # Last resort
+        if os.name == 'nt':  # Windows
+            return 'notepad'
+        else:
+            return 'vi'  # Should be available on all Unix systems
 
 
 class ConfigManager:
@@ -396,7 +517,7 @@ def main():
     parser.add_argument('--password', help='Password or API token (for basic auth)')
     parser.add_argument('--token', help='Personal Access Token (for bearer auth)')
     parser.add_argument('--output', '-o', help='Output file for markdown')
-    parser.add_argument('--action', choices=['download', 'read', 'add', 'test-auth'], 
+    parser.add_argument('--action', choices=['download', 'read', 'add', 'edit', 'test-auth'], 
                        default='download', help='Action to perform')
     parser.add_argument('--content', help='Content to add (for add action)')
     parser.add_argument('--content-type', choices=['markdown', 'html'], 
@@ -562,6 +683,15 @@ def main():
                 content_type=args.content_type
             )
             print(f"Content added successfully. New version: {result['version']['number']}")
+        
+        elif args.action == 'edit':
+            if not args.url:
+                print("Error: URL is required for edit action")
+                sys.exit(1)
+            
+            result = client.edit_page_with_editor(args.url)
+            if result is None:
+                print("Edit cancelled or no changes made.")
         
     except Exception as e:
         print(f"Error: {e}")

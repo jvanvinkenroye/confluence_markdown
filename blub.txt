@@ -1,0 +1,17 @@
+
+## Example Usage
+
+Ask your AI assistant to:
+
+- **📝 Automatic Jira Updates** - "Update Jira from our meeting notes"
+- **🔍 AI-Powered Confluence Search** - "Find our OKR guide in Confluence and summarize it"
+- **🐛 Smart Jira Issue Filtering** - "Show me urgent bugs in PROJ project from last week"
+- **📄 Content Creation & Management** - "Create a tech design doc for XYZ feature"
+
+### Feature Demo
+
+https://github.com/user-attachments/assets/35303504-14c6-4ae4-913b-7c25ea511c3e
+
+<details> <summary>Confluence Demo</summary>
+
+https://github.com/user-attachments/assets/7fe9c488-ad0c-4876-9b54-120b666bb785

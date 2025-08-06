@@ -201,6 +201,28 @@ confluence-markdown \
   URL
 ```
 
+### Edit Page Interactively
+
+Open page content in your preferred editor, make changes, and upload automatically:
+```bash
+confluence-markdown \
+  --base-url https://confluence.company.com \
+  --username YOUR_USERNAME \
+  --token YOUR_PAT \
+  --action edit \
+  URL
+
+# Or with saved config
+confluence-markdown --config --action edit URL
+```
+
+**How it works:**
+1. Downloads current page content as markdown
+2. Opens in your editor (respects `$EDITOR` environment variable)
+3. Detects common editors: VS Code, vim, nano, emacs, etc.
+4. After saving and closing, uploads changes back to Confluence
+5. If you exit without saving, no changes are made
+
 ## Supported URL Formats
 
 The tool supports various Confluence URL formats:
@@ -221,7 +243,7 @@ options:
   --password           Password or API token
   --token              Personal Access Token (use with username for DC)
   --output, -o         Output file for markdown (download action)
-  --action             Action: download (default), read, add, test-auth
+  --action             Action: download (default), read, add, edit, test-auth
   --content            Content to add (for add action)
   --content-type       Content type: markdown (default) or html
   --append             Append content (default: True)
