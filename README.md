@@ -7,6 +7,9 @@ A Python tool to download, read, and update Confluence Data Center pages with ma
 - Download Confluence pages as markdown files
 - Read page content directly in terminal
 - Add content to existing pages (markdown or HTML)
+- Create new pages with templates
+- Interactive page selection with fzf (optional)
+- **Automatic pagination** - Fetches ALL pages and spaces (1000+)
 - Support for multiple authentication methods
 - Save credentials in config file for easy reuse
 - Support for multiple configuration profiles
@@ -164,6 +167,33 @@ confluence-markdown \
   "https://confluence.company.com/pages/viewpage.action?pageId=12345"
 ```
 
+### Create New Page
+
+Create a new page in a space:
+```bash
+confluence-markdown \
+  --base-url https://confluence.company.com \
+  --username YOUR_USERNAME \
+  --token YOUR_PAT \
+  --action create \
+  --space MYSPACE \
+  --title "My New Page" \
+  --content "# Welcome\n\nThis is my new page content"
+```
+
+Create a page under a parent (for hierarchy):
+```bash
+confluence-markdown \
+  --base-url https://confluence.company.com \
+  --username YOUR_USERNAME \
+  --token YOUR_PAT \
+  --action create \
+  --space MYSPACE \
+  --title "Child Page" \
+  --parent-id 12345 \
+  --content "Content for the child page"
+```
+
 ### Add Content to Page
 
 Append markdown content to an existing page:
@@ -243,11 +273,16 @@ options:
   --password           Password or API token
   --token              Personal Access Token (use with username for DC)
   --output, -o         Output file for markdown (download action)
-  --action             Action: download (default), read, add, edit, test-auth
-  --content            Content to add (for add action)
+  --action             Action: download (default), read, add, edit, create, test-auth
+  --content            Content to add (for add/create action)
   --content-type       Content type: markdown (default) or html
   --append             Append content (default: True)
   --prepend            Prepend content instead of append
+
+create options:
+  --space              Space key for new page (required for create)
+  --title              Title for new page (required for create)
+  --parent-id          Parent page ID for hierarchy (optional)
 
 config options:
   --init-config        Initialize empty config file structure
