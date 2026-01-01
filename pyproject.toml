@@ -15,11 +15,13 @@ dependencies = [
 [project.scripts]
 confluence-markdown = "confluence_markdown.main:main"
 
-[tool.uv]
-dev-dependencies = [
+[dependency-groups]
+dev = [
     "pytest>=7.0.0",
     "pytest-cov>=4.0.0",
 ]
+
+[tool.uv]
 package = true
 
 [build-system]
