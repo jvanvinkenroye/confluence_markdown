@@ -253,7 +253,68 @@ class ConfluenceClient:
         response.raise_for_status()
         
         return response.json()
-    
+
+    def create_page(self, space_key: str, title: str, content: str,
+                   parent_id: Optional[str] = None, content_type: str = 'markdown') -> dict:
+        """
+        Create a new page in Confluence.
+
+        Args:
+            space_key: Space key where the page will be created (e.g., 'TEST', 'VAMP')
+            title: Page title
+            content: Page content (markdown or HTML)
+            parent_id: Optional parent page ID for hierarchy
+            content_type: 'markdown' or 'html'
+
+        Returns:
+            Created page data
+        """
+        # Convert markdown to HTML if needed
+        if content_type == 'markdown':
+            html_content = self._markdown_to_html(content)
+        else:
+            html_content = content
+
+        # Build page data
+        page_data = {
+            'type': 'page',
+            'title': title,
+            'space': {
+                'key': space_key
+            },
+            'body': {
+                'storage': {
+                    'value': html_content,
+                    'representation': 'storage'
+                }
+            }
+        }
+
+        # Add parent if specified
+        if parent_id:
+            page_data['ancestors'] = [{'id': parent_id}]
+
+        url = f"{self.api_base}/content"
+        print(f"DEBUG: Creating page in space {space_key} with title: {title}")
+
+        response = self.session.post(url, json=page_data)
+
+        if response.status_code != 200:
+            print(f"ERROR: HTTP {response.status_code}")
+            print(f"ERROR: Full response: {response.text}")
+
+        response.raise_for_status()
+
+        created_page = response.json()
+        page_id = created_page['id']
+        print(f"✅ Page created successfully!")
+        print(f"   Title: {title}")
+        print(f"   Space: {space_key}")
+        print(f"   Page ID: {page_id}")
+        print(f"   URL: {self.base_url}/pages/viewpage.action?pageId={page_id}")
+
+        return created_page
+
     def _extract_page_id_from_url(self, page_url: str) -> Optional[str]:
         """Extract page ID from Confluence URL."""
         print(f"DEBUG: Extracting page ID from URL: {page_url}")
@@ -503,15 +564,20 @@ def main():
     parser.add_argument('--password', help='Password or API token (for basic auth)')
     parser.add_argument('--token', help='Personal Access Token (for bearer auth)')
     parser.add_argument('--output', '-o', help='Output file for markdown')
-    parser.add_argument('--action', choices=['download', 'read', 'add', 'edit', 'test-auth'], 
+    parser.add_argument('--action', choices=['download', 'read', 'add', 'edit', 'create', 'test-auth'],
                        default='download', help='Action to perform')
-    parser.add_argument('--content', help='Content to add (for add action)')
-    parser.add_argument('--content-type', choices=['markdown', 'html'], 
+    parser.add_argument('--content', help='Content to add (for add/create action)')
+    parser.add_argument('--content-type', choices=['markdown', 'html'],
                        default='markdown', help='Type of content to add')
     parser.add_argument('--append', action='store_true', default=True,
                        help='Append content (default: True)')
     parser.add_argument('--prepend', dest='append', action='store_false',
                        help='Prepend content instead of append')
+
+    # Create page options
+    parser.add_argument('--space', help='Space key for creating new page (e.g., TEST, VAMP)')
+    parser.add_argument('--title', help='Title for new page')
+    parser.add_argument('--parent-id', help='Parent page ID for hierarchy')
     
     # Config file options
     parser.add_argument('--save-config', action='store_true',
@@ -674,11 +740,30 @@ def main():
             if not args.url:
                 print("Error: URL is required for edit action")
                 sys.exit(1)
-            
+
             result = client.edit_page_with_editor(args.url)
             if result is None:
                 print("Edit cancelled or no changes made.")
-        
+
+        elif args.action == 'create':
+            if not args.space:
+                print("Error: --space is required for create action")
+                sys.exit(1)
+            if not args.title:
+                print("Error: --title is required for create action")
+                sys.exit(1)
+            if not args.content:
+                print("Error: --content is required for create action")
+                sys.exit(1)
+
+            result = client.create_page(
+                space_key=args.space,
+                title=args.title,
+                content=args.content,
+                parent_id=args.parent_id,
+                content_type=args.content_type
+            )
+
     except Exception as e:
         print(f"Error: {e}")
         sys.exit(1)
