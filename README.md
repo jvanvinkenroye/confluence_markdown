@@ -17,14 +17,48 @@ A Python tool to download, read, and update Confluence Data Center pages with ma
 
 ## Installation
 
-### Using uv (recommended)
+### Using uv tool (recommended - global install)
+
+Install the tool globally so you can use it from anywhere:
 
 ```bash
 # Clone the repository
 git clone <repository-url>
 cd confluence-markdown
 
-# Install with uv
+# Install globally with uv tool
+uv tool install --editable .
+
+# Now use from anywhere!
+confluence-markdown --help
+confluence-markdown --config --action test-auth
+```
+
+**Benefits:**
+- Available globally (no need for `uv run`)
+- Isolated environment (no conflicts with other projects)
+- Editable mode (code changes reflect immediately)
+- Fast execution
+
+**Management:**
+```bash
+# Uninstall
+uv tool uninstall confluence-markdown
+
+# List installed tools
+uv tool list
+```
+
+### Using uv (development)
+
+For development work in the project directory:
+
+```bash
+# Clone the repository
+git clone <repository-url>
+cd confluence-markdown
+
+# Install dependencies
 uv sync
 
 # Run with uv
