@@ -317,6 +317,9 @@ class ConfluenceClient:
 
     def _extract_page_id_from_url(self, page_url: str) -> Optional[str]:
         """Extract page ID from Confluence URL."""
+        if not page_url:
+            return None
+
         print(f"DEBUG: Extracting page ID from URL: {page_url}")
         parsed = urlparse(page_url)
         print(f"DEBUG: Parsed URL - path: {parsed.path}, query: {parsed.query}")
@@ -709,11 +712,19 @@ def main():
                 return
         
         elif args.action == 'download':
+            if not args.url:
+                print("Error: URL is required for download action")
+                sys.exit(1)
+
             markdown_content = client.download_as_markdown(args.url, args.output)
             if not args.output:
                 print(markdown_content)
-        
+
         elif args.action == 'read':
+            if not args.url:
+                print("Error: URL is required for read action")
+                sys.exit(1)
+
             page_info = client.read_page_content(args.url)
             print(f"Title: {page_info['title']}")
             print(f"Space: {page_info['space']} ({page_info['space_key']})")
@@ -724,10 +735,13 @@ def main():
             print(page_info['markdown_content'])
         
         elif args.action == 'add':
+            if not args.url:
+                print("Error: URL is required for add action")
+                sys.exit(1)
             if not args.content:
                 print("Error: --content is required for add action")
                 sys.exit(1)
-            
+
             result = client.add_content_to_page(
                 args.url, 
                 args.content,
