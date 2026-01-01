@@ -159,7 +159,7 @@ while true; do
     if [[ -z "$SPACES_JSON" ]]; then
         SPACES_JSON="$PAGE_JSON"
     else
-        SPACES_JSON=$(echo "$SPACES_JSON" "$PAGE_JSON" | python3 -c '
+        SPACES_JSON=$(printf "%s\n%s\n" "$SPACES_JSON" "$PAGE_JSON" | python3 -c '
 import json, sys
 lines = sys.stdin.read().strip().split("\n")
 data1 = json.loads(lines[0])
@@ -170,9 +170,11 @@ print(json.dumps(data1))
     fi
 
     # Check if there are more results
-    PAGE_SIZE=$(echo "$PAGE_JSON" | python3 -c 'import json,sys; print(len(json.load(sys.stdin).get("results", [])))')
-    if [[ $PAGE_SIZE -lt $LIMIT ]]; then
-        break
+    if [[ -n "$PAGE_JSON" ]]; then
+        PAGE_SIZE=$(echo "$PAGE_JSON" | python3 -c 'import json,sys; print(len(json.load(sys.stdin).get("results", [])))')
+        if [[ $PAGE_SIZE -lt $LIMIT ]]; then
+            break
+        fi
     fi
 
     START=$((START + LIMIT))
@@ -285,7 +287,7 @@ while true; do
     if [[ -z "$PAGES_JSON" ]]; then
         PAGES_JSON="$PAGE_JSON"
     else
-        PAGES_JSON=$(echo "$PAGES_JSON" "$PAGE_JSON" | python3 -c '
+        PAGES_JSON=$(printf "%s\n%s\n" "$PAGES_JSON" "$PAGE_JSON" | python3 -c '
 import json, sys
 lines = sys.stdin.read().strip().split("\n")
 data1 = json.loads(lines[0])
@@ -296,9 +298,11 @@ print(json.dumps(data1))
     fi
 
     # Check if there are more results
-    PAGE_SIZE=$(echo "$PAGE_JSON" | python3 -c 'import json,sys; print(len(json.load(sys.stdin).get("results", [])))')
-    if [[ $PAGE_SIZE -lt $LIMIT ]]; then
-        break
+    if [[ -n "$PAGE_JSON" ]]; then
+        PAGE_SIZE=$(echo "$PAGE_JSON" | python3 -c 'import json,sys; print(len(json.load(sys.stdin).get("results", [])))')
+        if [[ $PAGE_SIZE -lt $LIMIT ]]; then
+            break
+        fi
     fi
 
     START=$((START + LIMIT))
