@@ -960,7 +960,7 @@ def main():
             "edit",
             "create",
             "test-auth",
-            "recent",
+            "edit-recent",
             "read-recent",
             "search",
         ],
@@ -1187,7 +1187,7 @@ def main():
             else:
                 print(f"❌ Authentication failed: {auth_result['error']}")
                 return
-        elif args.action == "recent":
+        elif args.action == "edit-recent":
             pages = client.list_recent_pages(args.limit)
             if not pages:
                 print("No recent pages found.")
