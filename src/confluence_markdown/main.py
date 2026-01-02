@@ -143,27 +143,41 @@ class ConfluenceClient:
             print(f"ERROR: Full response text: {response.text}")
             raise
 
-    def _build_recent_pages_cql(self) -> str:
-        """Build CQL for recent pages edited by the current user."""
-        return "type=page AND lastModifiedBy=currentUser() order by lastmodified desc"
+    def _recent_pages_cql_variants(self) -> list:
+        """Provide CQL variants for recent pages edited by the current user."""
+        return [
+            "type=page AND lastModifiedBy=currentUser() order by lastmodified desc",
+            "type=page AND contributor=currentUser() order by lastmodified desc",
+            "type=page AND creator=currentUser() order by lastmodified desc",
+            "type=page order by lastmodified desc",
+        ]
 
     def list_recent_pages(self, limit: int = 10) -> list:
         """List recently edited pages for the current user."""
         url = f"{self.api_base}/search"
-        params = {
-            "cql": self._build_recent_pages_cql(),
-            "limit": limit,
-            "expand": "content.space,content.version",
-        }
-
         print(f"DEBUG: Fetching recent pages from: {url}")
-        response = self.session.get(url, params=params)
-        if response.status_code != 200:
+        data = None
+        for cql in self._recent_pages_cql_variants():
+            params = {
+                "cql": cql,
+                "limit": limit,
+                "expand": "content.space,content.version",
+            }
+            response = self.session.get(url, params=params)
+            if response.status_code == 200:
+                data = response.json()
+                break
+            if response.status_code == 400 and "No field exists" in response.text:
+                continue
             print(f"ERROR: HTTP {response.status_code}")
             print(f"ERROR: Full response: {response.text}")
             response.raise_for_status()
 
-        data = response.json()
+        if data is None:
+            raise RuntimeError(
+                "Confluence rejected all recent-page CQL variants. "
+                "This instance may not support user-based filters."
+            )
         pages = []
         for item in data.get("results", []):
             content = item.get("content", item)

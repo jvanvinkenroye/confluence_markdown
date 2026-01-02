@@ -31,16 +31,18 @@ def test_url_parsing():
         assert result == expected_id, f"Failed to parse {url}"
 
 
-def test_recent_pages_cql():
-    """Ensure the recent pages CQL is stable."""
+def test_recent_pages_cql_variants():
+    """Ensure the recent pages CQL variants are stable."""
     client = ConfluenceClient(
         base_url="https://example.confluence.com",
         token="test-token",
     )
-    assert (
-        client._build_recent_pages_cql()
-        == "type=page AND lastModifiedBy=currentUser() order by lastmodified desc"
-    )
+    assert client._recent_pages_cql_variants() == [
+        "type=page AND lastModifiedBy=currentUser() order by lastmodified desc",
+        "type=page AND contributor=currentUser() order by lastmodified desc",
+        "type=page AND creator=currentUser() order by lastmodified desc",
+        "type=page order by lastmodified desc",
+    ]
 
 
 def test_url_parsing_rejects_non_immediate_segment():
