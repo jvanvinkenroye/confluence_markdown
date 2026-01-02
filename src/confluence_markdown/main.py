@@ -575,6 +575,7 @@ class ConfluenceClient:
         from rich import box
         from rich.markdown import Markdown
         from rich.table import Table
+        from rich.text import Text
 
         renderables = []
         text_lines: List[str] = []
@@ -603,17 +604,40 @@ class ConfluenceClient:
 
                 table = Table(
                     show_header=True,
-                    header_style="bold",
+                    header_style="bold cyan",
                     box=box.HEAVY,
                     show_lines=True,
+                    border_style="cyan",
                 )
                 for col in header:
-                    table.add_column(col)
+                    table.add_column(col, style="white")
                 for row in rows:
                     if len(row) < len(header):
                         row = row + [""] * (len(header) - len(row))
                     table.add_row(*row[: len(header)])
                 renderables.append(table)
+                continue
+
+            if line.startswith("# "):
+                if text_lines:
+                    renderables.append(Markdown("\n".join(text_lines)))
+                    text_lines = []
+                renderables.append(Text(line[2:], style="bold magenta"))
+                index += 1
+                continue
+            if line.startswith("## "):
+                if text_lines:
+                    renderables.append(Markdown("\n".join(text_lines)))
+                    text_lines = []
+                renderables.append(Text(line[3:], style="bold blue"))
+                index += 1
+                continue
+            if line.startswith("### "):
+                if text_lines:
+                    renderables.append(Markdown("\n".join(text_lines)))
+                    text_lines = []
+                renderables.append(Text(line[4:], style="bold green"))
+                index += 1
                 continue
 
             text_lines.append(line)
