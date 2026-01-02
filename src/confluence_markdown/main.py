@@ -556,6 +556,22 @@ class ConfluenceClient:
         except Exception:
             return {}
 
+    def _paginate_text(self, text: str) -> None:
+        """Print text in pages, waiting for user input between chunks."""
+        term_height = shutil.get_terminal_size((80, 24)).lines
+        page_size = max(5, term_height - 2)
+        lines = text.splitlines()
+        index = 0
+        while index < len(lines):
+            chunk = "\n".join(lines[index : index + page_size])
+            print(chunk)
+            index += page_size
+            if index >= len(lines):
+                break
+            choice = input("Press Enter for more, or 'q' to quit: ").strip().lower()
+            if choice == "q":
+                break
+
     def _extract_macro_map_from_markdown(self, content: str) -> Dict[str, str]:
         """Extract macro map from the markdown content."""
         pattern = r"<!-- CONFLUENCE_MACROS_START\n(.*?)\nCONFLUENCE_MACROS_END -->"
@@ -1081,9 +1097,24 @@ def main():
             page_info = client.read_page_content(selected_url)
             markdown_content = page_info["markdown_content"]
             if Console and Markdown:
-                Console().print(Markdown(markdown_content))
+                console = Console()
+                term_height = shutil.get_terminal_size((80, 24)).lines
+                page_size = max(5, term_height - 2)
+                lines = markdown_content.splitlines()
+                index = 0
+                while index < len(lines):
+                    chunk = "\n".join(lines[index : index + page_size])
+                    console.print(Markdown(chunk))
+                    index += page_size
+                    if index >= len(lines):
+                        break
+                    choice = (
+                        input("Press Enter for more, or 'q' to quit: ").strip().lower()
+                    )
+                    if choice == "q":
+                        break
             else:
-                print(markdown_content)
+                client._paginate_text(markdown_content)
 
         elif args.action == "download":
             if not args.url:
