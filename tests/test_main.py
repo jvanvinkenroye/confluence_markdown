@@ -79,6 +79,21 @@ def test_html_to_markdown_with_macros():
     assert macro_map["[[CONFLUENCE-MACRO-1]]"].startswith("<ac:structured-macro")
 
 
+def test_html_to_markdown_with_ac_image():
+    """Preserve ac:image tags as placeholders in markdown."""
+    client = ConfluenceClient(
+        base_url="https://example.confluence.com",
+        token="test-token",
+    )
+    html = (
+        "<p>Img</p>"
+        '<ac:image ac:height="250"><ri:attachment ri:filename="x.png" /></ac:image>'
+    )
+    markdown, macro_map = client._html_to_markdown_with_macros(html)
+    assert "[[CONFLUENCE-MACRO-1]]" in markdown
+    assert macro_map["[[CONFLUENCE-MACRO-1]]"].startswith("<ac:image")
+
+
 def test_client_initialization_with_token():
     """Test client initialization with token."""
     client = ConfluenceClient(base_url="https://example.com", token="test-token")

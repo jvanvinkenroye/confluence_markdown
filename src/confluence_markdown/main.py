@@ -24,6 +24,7 @@ from urllib.parse import urlparse
 import markdown
 import requests
 from bs4 import BeautifulSoup
+from bs4.element import Tag
 from markdownify import markdownify
 
 
@@ -438,7 +439,21 @@ class ConfluenceClient:
         macro_map: Dict[str, str] = {}
         macro_index = 1
 
-        for tag in soup.find_all("ac:structured-macro"):
+        macro_tags = []
+        for tag in soup.find_all(True):
+            if not isinstance(tag, Tag):
+                continue
+            if not tag.name or not tag.name.startswith("ac:"):
+                continue
+            if tag.find_parent(
+                lambda parent: isinstance(parent, Tag)
+                and parent.name
+                and parent.name.startswith("ac:")
+            ):
+                continue
+            macro_tags.append(tag)
+
+        for tag in macro_tags:
             placeholder = f"[[CONFLUENCE-MACRO-{macro_index}]]"
             macro_map[placeholder] = str(tag)
             tag.replace_with(placeholder)
