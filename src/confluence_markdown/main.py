@@ -1217,6 +1217,7 @@ def main():
             selected_url = inquirer.select(
                 message="Select a page", choices=choices
             ).execute()
+            print(f"Page URL: {selected_url}")
             result = client.edit_page_with_editor(selected_url)
             if result is None:
                 print("Edit cancelled or no changes made.")
@@ -1248,6 +1249,7 @@ def main():
             selected_url = inquirer.select(
                 message="Select a page", choices=choices
             ).execute()
+            print(f"Page URL: {selected_url}")
             page_info = client.read_page_content(selected_url)
             markdown_content = page_info["markdown_content"]
             if args.raw:
@@ -1299,6 +1301,7 @@ def main():
             selected_url = inquirer.select(
                 message="Select a page", choices=choices
             ).execute()
+            print(f"Page URL: {selected_url}")
             page_info = client.read_page_content(selected_url)
             markdown_content = page_info["markdown_content"]
             if args.raw:
@@ -1321,6 +1324,7 @@ def main():
             markdown_content = client.download_as_markdown(args.url, args.output)
             if not args.output:
                 print(markdown_content)
+            print(f"Page URL: {args.url}")
 
         elif args.action == "read":
             if not args.url:
@@ -1335,6 +1339,7 @@ def main():
             print("\nMarkdown Content:")
             print("=" * 50)
             print(page_info["markdown_content"])
+            print(f"Page URL: {page_info['url']}")
 
         elif args.action == "add":
             if not args.url:
@@ -1353,6 +1358,13 @@ def main():
             print(
                 f"Content added successfully. New version: {result['version']['number']}"
             )
+            page_id = result.get("id")
+            page_url = (
+                f"{client.base_url}/pages/viewpage.action?pageId={page_id}"
+                if page_id
+                else args.url
+            )
+            print(f"Page URL: {page_url}")
 
         elif args.action == "edit":
             if not args.url:
@@ -1362,6 +1374,14 @@ def main():
             result = client.edit_page_with_editor(args.url)
             if result is None:
                 print("Edit cancelled or no changes made.")
+            else:
+                page_id = result.get("id")
+                page_url = (
+                    f"{client.base_url}/pages/viewpage.action?pageId={page_id}"
+                    if page_id
+                    else args.url
+                )
+                print(f"Page URL: {page_url}")
 
         elif args.action == "create":
             if not args.space:
@@ -1381,6 +1401,11 @@ def main():
                 parent_id=args.parent_id,
                 content_type=args.content_type,
             )
+            page_id = result.get("id")
+            if page_id:
+                print(
+                    f"Page URL: {client.base_url}/pages/viewpage.action?pageId={page_id}"
+                )
 
     except Exception as e:
         print(f"Error: {e}")
