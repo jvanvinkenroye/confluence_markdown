@@ -556,6 +556,71 @@ class ConfluenceClient:
         except Exception:
             return {}
 
+    def _is_table_separator(self, line: str) -> bool:
+        """Check if a line is a markdown table separator."""
+        pattern = r"^\s*\|?\s*:?-{3,}:?\s*(\|\s*:?-{3,}:?\s*)+\|?\s*$"
+        return re.match(pattern, line) is not None
+
+    def _split_table_row(self, line: str) -> List[str]:
+        """Split a markdown table row into cells."""
+        stripped = line.strip()
+        if stripped.startswith("|"):
+            stripped = stripped[1:]
+        if stripped.endswith("|"):
+            stripped = stripped[:-1]
+        return [cell.strip() for cell in stripped.split("|")]
+
+    def _build_rich_renderables(self, markdown_content: str) -> list:
+        """Build Rich renderables from markdown with table support."""
+        from rich import box
+        from rich.markdown import Markdown
+        from rich.table import Table
+
+        renderables = []
+        text_lines: List[str] = []
+        lines = markdown_content.splitlines()
+        index = 0
+
+        while index < len(lines):
+            line = lines[index]
+            if (
+                "|" in line
+                and index + 1 < len(lines)
+                and self._is_table_separator(lines[index + 1])
+            ):
+                if text_lines:
+                    renderables.append(Markdown("\n".join(text_lines)))
+                    text_lines = []
+
+                header = self._split_table_row(line)
+                index += 2
+                rows = []
+                while (
+                    index < len(lines) and lines[index].strip() and "|" in lines[index]
+                ):
+                    rows.append(self._split_table_row(lines[index]))
+                    index += 1
+
+                table = Table(
+                    show_header=True, header_style="bold", box=box.SIMPLE_HEAVY
+                )
+                for col in header:
+                    table.add_column(col)
+                for row in rows:
+                    if len(row) < len(header):
+                        row = row + [""] * (len(header) - len(row))
+                    table.add_row(*row[: len(header)])
+                renderables.append(table)
+                continue
+
+            text_lines.append(line)
+            index += 1
+
+        if text_lines:
+            renderables.append(Markdown("\n".join(text_lines)))
+
+        return renderables
+
     def _paginate_text(self, text: str) -> None:
         """Print text in pages, waiting for user input between chunks."""
         term_height = shutil.get_terminal_size((80, 24)).lines
@@ -839,6 +904,11 @@ def main():
         help="Print raw markdown instead of Rich rendering",
     )
     parser.add_argument(
+        "--width",
+        type=int,
+        help="Override render width for Rich output",
+    )
+    parser.add_argument(
         "--verbose",
         action="store_true",
         help="Enable verbose debug output",
@@ -1104,10 +1174,10 @@ def main():
             if args.raw:
                 client._paginate_text(markdown_content)
             elif Console and Markdown:
-                console = Console(
-                    width=shutil.get_terminal_size((80, 24)).columns, record=True
-                )
-                console.print(Markdown(markdown_content))
+                render_width = args.width or shutil.get_terminal_size((80, 24)).columns
+                console = Console(width=render_width, record=True)
+                for renderable in client._build_rich_renderables(markdown_content):
+                    console.print(renderable)
                 rendered = console.export_text()
                 client._paginate_text(rendered)
             else:
