@@ -834,6 +834,11 @@ def main():
         help="Action to perform",
     )
     parser.add_argument(
+        "--raw",
+        action="store_true",
+        help="Print raw markdown instead of Rich rendering",
+    )
+    parser.add_argument(
         "--verbose",
         action="store_true",
         help="Enable verbose debug output",
@@ -1096,7 +1101,9 @@ def main():
             ).execute()
             page_info = client.read_page_content(selected_url)
             markdown_content = page_info["markdown_content"]
-            if Console and Markdown:
+            if args.raw:
+                client._paginate_text(markdown_content)
+            elif Console and Markdown:
                 console = Console(
                     width=shutil.get_terminal_size((80, 24)).columns, record=True
                 )
