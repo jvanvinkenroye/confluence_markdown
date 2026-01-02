@@ -795,6 +795,33 @@ def main():
             print(f"❌ No config found for profile: {args.profile}")
             print(f"   Create one with --save-config")
             sys.exit(1)
+    else:
+        auto_config = config_manager.load_config("default")
+        if auto_config:
+            print("📋 Loading config from profile: default")
+            args.base_url = args.base_url or auto_config.get("base_url")
+            args.username = args.username or auto_config.get("username")
+            args.password = args.password or auto_config.get("password")
+            args.token = args.token or auto_config.get("token")
+
+    # Prompt for missing parameters if no config was available
+    if not args.base_url:
+        args.base_url = input("Confluence base URL: ").strip() or None
+
+    if not args.username:
+        username = input(
+            "Username (leave blank to use bearer token authentication): "
+        ).strip()
+        args.username = username or None
+
+    if not args.token and not args.password:
+        token = getpass.getpass(
+            "Personal Access Token (leave blank to use password): "
+        ).strip()
+        if token:
+            args.token = token
+        else:
+            args.password = getpass.getpass("Password: ")
 
     # Check if base_url is provided (required unless loading from config)
     if not args.base_url:
