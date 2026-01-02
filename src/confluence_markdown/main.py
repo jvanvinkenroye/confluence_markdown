@@ -145,7 +145,7 @@ class ConfluenceClient:
 
     def _build_recent_pages_cql(self) -> str:
         """Build CQL for recent pages edited by the current user."""
-        return "type=page AND lastmodifiedby=currentUser() order by lastmodified desc"
+        return "type=page AND lastModifiedBy=currentUser() order by lastmodified desc"
 
     def list_recent_pages(self, limit: int = 10) -> list:
         """List recently edited pages for the current user."""

@@ -39,7 +39,7 @@ def test_recent_pages_cql():
     )
     assert (
         client._build_recent_pages_cql()
-        == "type=page AND lastmodifiedby=currentUser() order by lastmodified desc"
+        == "type=page AND lastModifiedBy=currentUser() order by lastmodified desc"
     )
 
 
