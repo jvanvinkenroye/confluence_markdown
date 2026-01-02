@@ -861,7 +861,9 @@ def main():
             selected_url = inquirer.select(
                 message="Select a page", choices=choices
             ).execute()
-            print(selected_url)
+            result = client.edit_page_with_editor(selected_url)
+            if result is None:
+                print("Edit cancelled or no changes made.")
 
         elif args.action == "download":
             if not args.url:
