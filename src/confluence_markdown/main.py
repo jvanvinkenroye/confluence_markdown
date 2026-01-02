@@ -143,6 +143,47 @@ class ConfluenceClient:
             print(f"ERROR: Full response text: {response.text}")
             raise
 
+    def _build_recent_pages_cql(self) -> str:
+        """Build CQL for recent pages edited by the current user."""
+        return "type=page AND lastmodifiedby=currentUser() order by lastmodified desc"
+
+    def list_recent_pages(self, limit: int = 10) -> list:
+        """List recently edited pages for the current user."""
+        url = f"{self.api_base}/search"
+        params = {
+            "cql": self._build_recent_pages_cql(),
+            "limit": limit,
+            "expand": "content.space,content.version",
+        }
+
+        print(f"DEBUG: Fetching recent pages from: {url}")
+        response = self.session.get(url, params=params)
+        if response.status_code != 200:
+            print(f"ERROR: HTTP {response.status_code}")
+            print(f"ERROR: Full response: {response.text}")
+            response.raise_for_status()
+
+        data = response.json()
+        pages = []
+        for item in data.get("results", []):
+            content = item.get("content", item)
+            page_id = content.get("id")
+            if not page_id:
+                continue
+            space = content.get("space", {})
+            version = content.get("version", {})
+            pages.append(
+                {
+                    "id": page_id,
+                    "title": content.get("title", "(untitled)"),
+                    "space": space.get("key", "UNKNOWN"),
+                    "last_modified": version.get("when", "unknown"),
+                    "url": f"{self.base_url}/pages/viewpage.action?pageId={page_id}",
+                }
+            )
+
+        return pages
+
     def download_as_markdown(
         self, page_url: str, output_file: Optional[str] = None
     ) -> str:
@@ -605,7 +646,7 @@ def main():
     parser.add_argument("--output", "-o", help="Output file for markdown")
     parser.add_argument(
         "--action",
-        choices=["download", "read", "add", "edit", "create", "test-auth"],
+        choices=["download", "read", "add", "edit", "create", "test-auth", "recent"],
         default="download",
         help="Action to perform",
     )
@@ -635,6 +676,14 @@ def main():
     )
     parser.add_argument("--title", help="Title for new page")
     parser.add_argument("--parent-id", help="Parent page ID for hierarchy")
+
+    # Recent pages options
+    parser.add_argument(
+        "--limit",
+        type=int,
+        default=10,
+        help="Number of recent pages to fetch (default: 10)",
+    )
 
     # Config file options
     parser.add_argument(
@@ -776,6 +825,29 @@ def main():
             else:
                 print(f"❌ Authentication failed: {auth_result['error']}")
                 return
+        elif args.action == "recent":
+            pages = client.list_recent_pages(args.limit)
+            if not pages:
+                print("No recent pages found.")
+                return
+            try:
+                from InquirerPy import inquirer
+            except ImportError:
+                print(
+                    "Error: InquirerPy is required for interactive selection. "
+                    "Install it with `uv add InquirerPy`."
+                )
+                sys.exit(1)
+
+            choices = []
+            for page in pages:
+                label = f"{page['title']} - {page['space']} - {page['last_modified']}"
+                choices.append({"name": label, "value": page["url"]})
+
+            selected_url = inquirer.select(
+                message="Select a page", choices=choices
+            ).execute()
+            print(selected_url)
 
         elif args.action == "download":
             if not args.url:
