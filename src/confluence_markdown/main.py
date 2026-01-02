@@ -601,9 +601,7 @@ class ConfluenceClient:
                     rows.append(self._split_table_row(lines[index]))
                     index += 1
 
-                table = Table(
-                    show_header=True, header_style="bold", box=box.SIMPLE_HEAVY
-                )
+                table = Table(show_header=True, header_style="bold", box=box.SQUARE)
                 for col in header:
                     table.add_column(col)
                 for row in rows:
