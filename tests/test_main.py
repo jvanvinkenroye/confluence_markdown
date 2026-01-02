@@ -68,6 +68,19 @@ def test_build_text_search_cql():
     assert cql == 'type=page AND text~"foo \\"bar\\"" order by lastmodified desc'
 
 
+def test_ensure_page_cql():
+    """Ensure page type constraint is added when missing."""
+    client = ConfluenceClient(
+        base_url="https://example.confluence.com",
+        token="test-token",
+    )
+    assert client._ensure_page_cql("space = TIK") == "type=page AND (space = TIK)"
+    assert (
+        client._ensure_page_cql("type=page AND space = TIK")
+        == "type=page AND space = TIK"
+    )
+
+
 def test_url_parsing_rejects_non_immediate_segment():
     """Only accept the segment immediately after /pages/."""
     client = ConfluenceClient(

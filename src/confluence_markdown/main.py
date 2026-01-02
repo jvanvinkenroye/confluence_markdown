@@ -169,6 +169,12 @@ class ConfluenceClient:
         escaped = query.replace('"', '\\"')
         return f'type=page AND text~"{escaped}" order by lastmodified desc'
 
+    def _ensure_page_cql(self, cql: str) -> str:
+        """Ensure CQL limits results to pages."""
+        if "type=page" in cql.lower():
+            return cql
+        return f"type=page AND ({cql})"
+
     def list_recent_pages(self, limit: int = 10) -> list:
         """List recently edited pages for the current user."""
         url = f"{self.api_base}/search"
@@ -287,6 +293,8 @@ class ConfluenceClient:
         pages = []
         for item in data.get("results", []):
             content = item.get("content", item)
+            if content.get("type") and content.get("type") != "page":
+                continue
             page_id = content.get("id")
             if not page_id:
                 continue
@@ -1256,7 +1264,7 @@ def main():
         elif args.action == "search":
             cql = None
             if args.cql:
-                cql = args.cql
+                cql = client._ensure_page_cql(args.cql)
             elif args.query:
                 cql = client._build_text_search_cql(args.query)
             else:
