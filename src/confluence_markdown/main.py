@@ -9,6 +9,7 @@ Supports both API token and Personal Access Token authentication.
 import argparse
 import base64
 import getpass
+import io
 import json
 import os
 import re
@@ -713,6 +714,20 @@ class ConfluenceClient:
             if choice == "q":
                 break
 
+    def _render_markdown_to_ansi(self, markdown_content: str, width: int) -> str:
+        """Render markdown with Rich and return ANSI text without printing."""
+        from rich.console import Console
+
+        console = Console(
+            width=width,
+            record=True,
+            force_terminal=True,
+            file=io.StringIO(),
+        )
+        for renderable in self._build_rich_renderables(markdown_content):
+            console.print(renderable)
+        return console.export_text(styles=True)
+
     def _extract_macro_map_from_markdown(self, content: str) -> Dict[str, str]:
         """Extract macro map from the markdown content."""
         pattern = r"<!-- CONFLUENCE_MACROS_START\n(.*?)\nCONFLUENCE_MACROS_END -->"
@@ -1253,16 +1268,17 @@ def main():
             page_info = client.read_page_content(selected_url)
             markdown_content = page_info["markdown_content"]
             if args.raw:
-                client._paginate_text(markdown_content)
+                output = f"{markdown_content}\n\nPage URL: {page_info['url']}"
+                client._paginate_text(output)
             elif Console and Markdown:
                 render_width = args.width or shutil.get_terminal_size((80, 24)).columns
-                console = Console(width=render_width, record=True)
-                for renderable in client._build_rich_renderables(markdown_content):
-                    console.print(renderable)
-                rendered = console.export_text(styles=True)
-                client._paginate_text(rendered)
+                rendered = client._render_markdown_to_ansi(
+                    markdown_content, render_width
+                )
+                client._paginate_text(f"{rendered}\nPage URL: {page_info['url']}")
             else:
-                client._paginate_text(markdown_content)
+                output = f"{markdown_content}\n\nPage URL: {page_info['url']}"
+                client._paginate_text(output)
         elif args.action == "search":
             cql = None
             if args.cql:
@@ -1305,16 +1321,17 @@ def main():
             page_info = client.read_page_content(selected_url)
             markdown_content = page_info["markdown_content"]
             if args.raw:
-                client._paginate_text(markdown_content)
+                output = f"{markdown_content}\n\nPage URL: {page_info['url']}"
+                client._paginate_text(output)
             elif Console and Markdown:
                 render_width = args.width or shutil.get_terminal_size((80, 24)).columns
-                console = Console(width=render_width, record=True)
-                for renderable in client._build_rich_renderables(markdown_content):
-                    console.print(renderable)
-                rendered = console.export_text(styles=True)
-                client._paginate_text(rendered)
+                rendered = client._render_markdown_to_ansi(
+                    markdown_content, render_width
+                )
+                client._paginate_text(f"{rendered}\nPage URL: {page_info['url']}")
             else:
-                client._paginate_text(markdown_content)
+                output = f"{markdown_content}\n\nPage URL: {page_info['url']}"
+                client._paginate_text(output)
 
         elif args.action == "download":
             if not args.url:
