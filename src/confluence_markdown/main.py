@@ -35,6 +35,7 @@ class ConfluenceClient:
         username: Optional[str] = None,
         password: Optional[str] = None,
         token: Optional[str] = None,
+        verbose: bool = False,
     ):
         """
         Initialize Confluence client.
@@ -48,6 +49,7 @@ class ConfluenceClient:
         self.base_url = base_url.rstrip("/")
         self.api_base = f"{self.base_url}/rest/api"
         self.session = requests.Session()
+        self.verbose = verbose
 
         # Set up authentication
         if token:
@@ -57,17 +59,17 @@ class ConfluenceClient:
                 # Method 1: Token as password with username (common for DC)
                 auth_string = base64.b64encode(f"{username}:{token}".encode()).decode()
                 self.session.headers.update({"Authorization": f"Basic {auth_string}"})
-                print(f"DEBUG: Using token as password with username: {username}")
+                self._debug(f"Using token as password with username: {username}")
             else:
                 # Method 2: Bearer token (OAuth style)
                 self.session.headers.update({"Authorization": f"Bearer {token}"})
-                print(f"DEBUG: Using Bearer token authentication")
+                self._debug("Using Bearer token authentication")
         elif username and password:
             # Regular username/password authentication
             auth_string = base64.b64encode(f"{username}:{password}".encode()).decode()
             self.session.headers.update({"Authorization": f"Basic {auth_string}"})
             self.session.auth = (username, password)  # Add this for requests library
-            print(f"DEBUG: Using Basic authentication with username: {username}")
+            self._debug(f"Using Basic authentication with username: {username}")
         else:
             raise ValueError("Either token or username/password must be provided")
 
@@ -78,11 +80,11 @@ class ConfluenceClient:
     def test_authentication(self) -> dict:
         """Test authentication by getting current user info."""
         url = f"{self.api_base}/user/current"
-        print(f"DEBUG: Testing authentication at: {url}")
+        self._debug(f"Testing authentication at: {url}")
 
         response = self.session.get(url)
-        print(f"DEBUG: Auth test status: {response.status_code}")
-        print(f"DEBUG: Auth test response: {response.text[:500]}")
+        self._debug(f"Auth test status: {response.status_code}")
+        self._debug(f"Auth test response: {response.text[:500]}")
 
         if response.status_code == 200:
             return response.json()
@@ -119,17 +121,17 @@ class ConfluenceClient:
         url = f"{self.api_base}/content/{page_id}"
         params = {"expand": "body.storage,space,version,ancestors"}
 
-        print(f"DEBUG: Making request to: {url}")
-        print(f"DEBUG: Request params: {params}")
-        print(
-            f"DEBUG: Using headers: {self._redact_headers(dict(self.session.headers))}"
+        self._debug(f"Making request to: {url}")
+        self._debug(f"Request params: {params}")
+        self._debug(
+            f"Using headers: {self._redact_headers(dict(self.session.headers))}"
         )
 
         response = self.session.get(url, params=params)
 
-        print(f"DEBUG: Response status code: {response.status_code}")
-        print(f"DEBUG: Response headers: {dict(response.headers)}")
-        print(f"DEBUG: Response content (first 500 chars): {response.text[:500]}")
+        self._debug(f"Response status code: {response.status_code}")
+        self._debug(f"Response headers: {dict(response.headers)}")
+        self._debug(f"Response content (first 500 chars): {response.text[:500]}")
 
         if response.status_code != 200:
             print(f"ERROR: HTTP {response.status_code}")
@@ -155,7 +157,7 @@ class ConfluenceClient:
     def list_recent_pages(self, limit: int = 10) -> list:
         """List recently edited pages for the current user."""
         url = f"{self.api_base}/search"
-        print(f"DEBUG: Fetching recent pages from: {url}")
+        self._debug(f"Fetching recent pages from: {url}")
         data = None
         for cql in self._recent_pages_cql_variants():
             params = {
@@ -363,7 +365,7 @@ class ConfluenceClient:
             page_data["ancestors"] = [{"id": parent_id}]
 
         url = f"{self.api_base}/content"
-        print(f"DEBUG: Creating page in space {space_key} with title: {title}")
+        self._debug(f"Creating page in space {space_key} with title: {title}")
 
         response = self.session.post(url, json=page_data)
 
@@ -388,9 +390,9 @@ class ConfluenceClient:
         if not page_url:
             return None
 
-        print(f"DEBUG: Extracting page ID from URL: {page_url}")
+        self._debug(f"Extracting page ID from URL: {page_url}")
         parsed = urlparse(page_url)
-        print(f"DEBUG: Parsed URL - path: {parsed.path}, query: {parsed.query}")
+        self._debug(f"Parsed URL - path: {parsed.path}, query: {parsed.query}")
 
         # Handle different URL formats
         if "pageId=" in parsed.query:
@@ -398,21 +400,21 @@ class ConfluenceClient:
             for param in parsed.query.split("&"):
                 if param.startswith("pageId="):
                     page_id = param.split("=")[1]
-                    print(f"DEBUG: Found page ID from query param: {page_id}")
+                    self._debug(f"Found page ID from query param: {page_id}")
                     return page_id
 
         # Handle other URL formats by trying to extract from path
         path_parts = parsed.path.split("/")
-        print(f"DEBUG: Path parts: {path_parts}")
+        self._debug(f"Path parts: {path_parts}")
         for i, part in enumerate(path_parts):
             if part == "pages" and i + 1 < len(path_parts):
                 candidate = path_parts[i + 1]
                 if candidate.isdigit():
-                    print(f"DEBUG: Found page ID from path: {candidate}")
+                    self._debug(f"Found page ID from path: {candidate}")
                     return candidate
                 break
 
-        print(f"DEBUG: No page ID found in URL")
+        self._debug("No page ID found in URL")
         return None
 
     def _html_to_markdown(self, html_content: str) -> str:
@@ -440,10 +442,15 @@ class ConfluenceClient:
             redacted["Authorization"] = "REDACTED"
         return redacted
 
+    def _debug(self, message: str) -> None:
+        """Print debug output when verbose is enabled."""
+        if self.verbose:
+            print(f"DEBUG: {message}")
+
     def _markdown_to_html(self, markdown_content: str) -> str:
         """Convert markdown to HTML using proper markdown parser."""
         # Use markdown library with table support
-        md = markdown.Markdown(extensions=["tables", "fenced_code"])
+        md = markdown.Markdown(extensions=["tables", "fenced_code", "nl2br"])
         html_content = md.convert(markdown_content)
         return html_content
 
@@ -664,6 +671,11 @@ def main():
         default="download",
         help="Action to perform",
     )
+    parser.add_argument(
+        "--verbose",
+        action="store_true",
+        help="Enable verbose debug output",
+    )
     parser.add_argument("--content", help="Content to add (for add/create action)")
     parser.add_argument(
         "--content-type",
@@ -826,6 +838,7 @@ def main():
             username=args.username,
             password=args.password,
             token=args.token,
+            verbose=args.verbose,
         )
 
         if args.action == "test-auth":
