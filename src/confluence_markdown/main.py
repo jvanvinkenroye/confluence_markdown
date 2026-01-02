@@ -1205,7 +1205,7 @@ def main():
                 console = Console(width=render_width, record=True)
                 for renderable in client._build_rich_renderables(markdown_content):
                     console.print(renderable)
-                rendered = console.export_text()
+                rendered = console.export_text(styles=True)
                 client._paginate_text(rendered)
             else:
                 client._paginate_text(markdown_content)
