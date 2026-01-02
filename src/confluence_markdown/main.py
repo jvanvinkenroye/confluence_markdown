@@ -165,7 +165,8 @@ class ConfluenceClient:
         markdown_content = self._html_to_markdown(html_content)
 
         # Add metadata header
-        metadata = f"""# {page_data["title"]}
+        safe_title = self._escape_markdown_heading(page_data["title"])
+        metadata = f"""# {safe_title}
 
 **Space:** {page_data["space"]["name"]}
 **Page ID:** {page_data["id"]}
@@ -258,6 +259,11 @@ class ConfluenceClient:
 
         url = f"{self.api_base}/content/{page_data['id']}"
         response = self.session.put(url, json=update_data)
+        if response.status_code == 409:
+            raise RuntimeError(
+                "Confluence rejected the update due to a version conflict. "
+                "Refresh the page and try again."
+            )
         response.raise_for_status()
 
         return response.json()
@@ -345,12 +351,11 @@ class ConfluenceClient:
         print(f"DEBUG: Path parts: {path_parts}")
         for i, part in enumerate(path_parts):
             if part == "pages" and i + 1 < len(path_parts):
-                # Look for numeric page ID in the next parts
-                for j in range(i + 1, len(path_parts)):
-                    if path_parts[j].isdigit():
-                        page_id = path_parts[j]
-                        print(f"DEBUG: Found page ID from path: {page_id}")
-                        return page_id
+                candidate = path_parts[i + 1]
+                if candidate.isdigit():
+                    print(f"DEBUG: Found page ID from path: {candidate}")
+                    return candidate
+                break
 
         print(f"DEBUG: No page ID found in URL")
         return None
@@ -366,6 +371,12 @@ class ConfluenceClient:
         )
 
         return markdown.strip()
+
+    def _escape_markdown_heading(self, text: str) -> str:
+        """Escape characters that can break markdown headings."""
+        escaped = text.replace("\r", " ").replace("\n", " ")
+        escaped = escaped.replace("\\", "\\\\").replace("#", "\\#")
+        return escaped
 
     def _redact_headers(self, headers: Dict[str, str]) -> Dict[str, str]:
         """Redact sensitive headers before logging."""
@@ -470,6 +481,11 @@ class ConfluenceClient:
 
             url = f"{self.api_base}/content/{page_data['id']}"
             response = self.session.put(url, json=update_data)
+            if response.status_code == 409:
+                raise RuntimeError(
+                    "Confluence rejected the update due to a version conflict. "
+                    "Refresh the page and try again."
+                )
             response.raise_for_status()
 
             print(f"✅ Page updated successfully!")
