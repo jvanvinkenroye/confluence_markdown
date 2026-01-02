@@ -8,12 +8,15 @@ A Python tool to download, read, and update Confluence Data Center pages with ma
 - Read page content directly in terminal
 - Add content to existing pages (markdown or HTML)
 - Create new pages with templates
-- Interactive page selection with fzf (optional)
-- **Automatic pagination** - Fetches ALL pages and spaces (1000+)
+- Interactive page selection
+- Read recently viewed pages with Rich rendering
+- Edit recently edited pages
+- Search pages by text or CQL
+- Manual paging for long output
 - Support for multiple authentication methods
 - Save credentials in config file for easy reuse
 - Support for multiple configuration profiles
-- Debug mode for troubleshooting
+- Verbose debug mode for troubleshooting
 
 ## Installation
 
@@ -135,10 +138,10 @@ confluence-markdown \
 
 ### Use Saved Configuration
 
-Once saved, use the config without re-entering credentials:
+Once saved, the default profile is loaded automatically:
 ```bash
-# Use default profile
-confluence-markdown --config URL
+# Use default profile automatically
+confluence-markdown --action test-auth
 
 # Use specific profile
 confluence-markdown --config --profile work URL
@@ -199,6 +202,37 @@ confluence-markdown \
   --token YOUR_PAT \
   --action read \
   "https://confluence.company.com/pages/viewpage.action?pageId=12345"
+```
+
+### Read Recently Viewed Pages
+
+Select a recently viewed page and render it with Rich:
+```bash
+confluence-markdown --action read-recent --limit 10
+```
+
+Show raw markdown instead:
+```bash
+confluence-markdown --action read-recent --raw
+```
+
+### Edit Recently Edited Pages
+
+Select a recently edited page and open it in your editor:
+```bash
+confluence-markdown --action edit-recent --limit 10
+```
+
+### Search Pages
+
+Search by text:
+```bash
+confluence-markdown --action search --query "puppet" --limit 20
+```
+
+Search by CQL:
+```bash
+confluence-markdown --action search --cql "type=page AND space = TIK"
 ```
 
 ### Create New Page
@@ -307,11 +341,18 @@ options:
   --password           Password or API token
   --token              Personal Access Token (use with username for DC)
   --output, -o         Output file for markdown (download action)
-  --action             Action: download (default), read, add, edit, create, test-auth
+  --action             Action: download (default), read, add, edit, create, test-auth,
+                       edit-recent, read-recent, search
   --content            Content to add (for add/create action)
   --content-type       Content type: markdown (default) or html
   --append             Append content (default: True)
   --prepend            Prepend content instead of append
+  --limit              Number of pages to fetch (recent/read-recent/search)
+  --query              Search query text (search action)
+  --cql                CQL query (search action)
+  --raw                Print raw markdown instead of Rich rendering
+  --width              Override render width for Rich output
+  --verbose            Enable debug output
 
 create options:
   --space              Space key for new page (required for create)
@@ -343,10 +384,7 @@ config options:
 
 ## Troubleshooting
 
-The script includes debug output to help troubleshoot issues:
-- Shows extracted page ID from URL
-- Displays request details and authentication method
-- Shows server response status and content
+Enable debug output with `--verbose` to see request and response details.
 
 If you encounter authentication errors:
 1. First run with `--action test-auth` to verify credentials
@@ -360,6 +398,12 @@ If you encounter authentication errors:
 - requests
 - markdownify
 - beautifulsoup4
+- InquirerPy
+- rich
+
+## Legacy Files
+
+Older docs and shell scripts have been moved to `legacy/docs` and `legacy/scripts`.
 
 ## License
 
