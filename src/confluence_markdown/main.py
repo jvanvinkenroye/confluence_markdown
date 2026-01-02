@@ -156,6 +156,14 @@ class ConfluenceClient:
             "type=page order by lastmodified desc",
         ]
 
+    def _recently_viewed_cql_variants(self) -> list:
+        """Provide CQL variants for recently viewed pages."""
+        return [
+            "type=page AND lastViewed is not EMPTY order by lastViewed desc",
+            "type=page AND lastviewed is not EMPTY order by lastviewed desc",
+            "type=page order by lastmodified desc",
+        ]
+
     def list_recent_pages(self, limit: int = 10) -> list:
         """List recently edited pages for the current user."""
         url = f"{self.api_base}/search"
@@ -182,6 +190,53 @@ class ConfluenceClient:
                 "Confluence rejected all recent-page CQL variants. "
                 "This instance may not support user-based filters."
             )
+        pages = []
+        for item in data.get("results", []):
+            content = item.get("content", item)
+            page_id = content.get("id")
+            if not page_id:
+                continue
+            space = content.get("space", {})
+            version = content.get("version", {})
+            pages.append(
+                {
+                    "id": page_id,
+                    "title": content.get("title", "(untitled)"),
+                    "space": space.get("key", "UNKNOWN"),
+                    "last_modified": version.get("when", "unknown"),
+                    "url": f"{self.base_url}/pages/viewpage.action?pageId={page_id}",
+                }
+            )
+
+        return pages
+
+    def list_recently_viewed_pages(self, limit: int = 10) -> list:
+        """List recently viewed pages for the current user."""
+        url = f"{self.api_base}/search"
+        self._debug(f"Fetching recently viewed pages from: {url}")
+        data = None
+        for cql in self._recently_viewed_cql_variants():
+            params = {
+                "cql": cql,
+                "limit": limit,
+                "expand": "content.space,content.version",
+            }
+            response = self.session.get(url, params=params)
+            if response.status_code == 200:
+                data = response.json()
+                break
+            if response.status_code == 400 and "No field exists" in response.text:
+                continue
+            print(f"ERROR: HTTP {response.status_code}")
+            print(f"ERROR: Full response: {response.text}")
+            response.raise_for_status()
+
+        if data is None:
+            raise RuntimeError(
+                "Confluence rejected all recently-viewed CQL variants. "
+                "This instance may not support view tracking."
+            )
+
         pages = []
         for item in data.get("results", []):
             content = item.get("content", item)
@@ -743,7 +798,16 @@ def main():
     parser.add_argument("--output", "-o", help="Output file for markdown")
     parser.add_argument(
         "--action",
-        choices=["download", "read", "add", "edit", "create", "test-auth", "recent"],
+        choices=[
+            "download",
+            "read",
+            "add",
+            "edit",
+            "create",
+            "test-auth",
+            "recent",
+            "read-recent",
+        ],
         default="download",
         help="Action to perform",
     )
@@ -980,6 +1044,40 @@ def main():
             result = client.edit_page_with_editor(selected_url)
             if result is None:
                 print("Edit cancelled or no changes made.")
+        elif args.action == "read-recent":
+            pages = client.list_recently_viewed_pages(args.limit)
+            if not pages:
+                print("No recently viewed pages found.")
+                return
+            try:
+                from InquirerPy import inquirer
+            except ImportError:
+                print(
+                    "Error: InquirerPy is required for interactive selection. "
+                    "Install it with `uv add InquirerPy`."
+                )
+                sys.exit(1)
+            try:
+                from rich.console import Console
+                from rich.markdown import Markdown
+            except ImportError:
+                Console = None
+                Markdown = None
+
+            choices = []
+            for page in pages:
+                label = f"{page['title']} - {page['space']} - {page['last_modified']}"
+                choices.append({"name": label, "value": page["url"]})
+
+            selected_url = inquirer.select(
+                message="Select a page", choices=choices
+            ).execute()
+            page_info = client.read_page_content(selected_url)
+            markdown_content = page_info["markdown_content"]
+            if Console and Markdown:
+                Console().print(Markdown(markdown_content))
+            else:
+                print(markdown_content)
 
         elif args.action == "download":
             if not args.url:

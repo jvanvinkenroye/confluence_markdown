@@ -45,6 +45,19 @@ def test_recent_pages_cql_variants():
     ]
 
 
+def test_recently_viewed_cql_variants():
+    """Ensure the recently viewed CQL variants are stable."""
+    client = ConfluenceClient(
+        base_url="https://example.confluence.com",
+        token="test-token",
+    )
+    assert client._recently_viewed_cql_variants() == [
+        "type=page AND lastViewed is not EMPTY order by lastViewed desc",
+        "type=page AND lastviewed is not EMPTY order by lastviewed desc",
+        "type=page order by lastmodified desc",
+    ]
+
+
 def test_url_parsing_rejects_non_immediate_segment():
     """Only accept the segment immediately after /pages/."""
     client = ConfluenceClient(
