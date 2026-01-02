@@ -179,7 +179,10 @@ class ConfluenceClient:
             if response.status_code == 200:
                 data = response.json()
                 break
-            if response.status_code == 400 and "No field exists" in response.text:
+            if response.status_code == 400 and (
+                "No field exists" in response.text
+                or "Could not parse cql" in response.text
+            ):
                 continue
             print(f"ERROR: HTTP {response.status_code}")
             print(f"ERROR: Full response: {response.text}")
