@@ -1097,22 +1097,12 @@ def main():
             page_info = client.read_page_content(selected_url)
             markdown_content = page_info["markdown_content"]
             if Console and Markdown:
-                console = Console()
-                term_height = shutil.get_terminal_size((80, 24)).lines
-                page_size = max(5, term_height - 2)
-                lines = markdown_content.splitlines()
-                index = 0
-                while index < len(lines):
-                    chunk = "\n".join(lines[index : index + page_size])
-                    console.print(Markdown(chunk))
-                    index += page_size
-                    if index >= len(lines):
-                        break
-                    choice = (
-                        input("Press Enter for more, or 'q' to quit: ").strip().lower()
-                    )
-                    if choice == "q":
-                        break
+                console = Console(
+                    width=shutil.get_terminal_size((80, 24)).columns, record=True
+                )
+                console.print(Markdown(markdown_content))
+                rendered = console.export_text()
+                client._paginate_text(rendered)
             else:
                 client._paginate_text(markdown_content)
 
