@@ -164,6 +164,11 @@ class ConfluenceClient:
             "type=page order by lastmodified desc",
         ]
 
+    def _build_text_search_cql(self, query: str) -> str:
+        """Build a CQL query for free-text search."""
+        escaped = query.replace('"', '\\"')
+        return f'type=page AND text~"{escaped}" order by lastmodified desc'
+
     def list_recent_pages(self, limit: int = 10) -> list:
         """List recently edited pages for the current user."""
         url = f"{self.api_base}/search"
@@ -243,6 +248,42 @@ class ConfluenceClient:
                 "This instance may not support view tracking."
             )
 
+        pages = []
+        for item in data.get("results", []):
+            content = item.get("content", item)
+            page_id = content.get("id")
+            if not page_id:
+                continue
+            space = content.get("space", {})
+            version = content.get("version", {})
+            pages.append(
+                {
+                    "id": page_id,
+                    "title": content.get("title", "(untitled)"),
+                    "space": space.get("key", "UNKNOWN"),
+                    "last_modified": version.get("when", "unknown"),
+                    "url": f"{self.base_url}/pages/viewpage.action?pageId={page_id}",
+                }
+            )
+
+        return pages
+
+    def search_pages(self, cql: str, limit: int = 10) -> list:
+        """Search pages using the provided CQL."""
+        url = f"{self.api_base}/search"
+        self._debug(f"Searching pages with CQL: {cql}")
+        params = {
+            "cql": cql,
+            "limit": limit,
+            "expand": "content.space,content.version",
+        }
+        response = self.session.get(url, params=params)
+        if response.status_code != 200:
+            print(f"ERROR: HTTP {response.status_code}")
+            print(f"ERROR: Full response: {response.text}")
+            response.raise_for_status()
+
+        data = response.json()
         pages = []
         for item in data.get("results", []):
             content = item.get("content", item)
@@ -921,6 +962,7 @@ def main():
             "test-auth",
             "recent",
             "read-recent",
+            "search",
         ],
         default="download",
         help="Action to perform",
@@ -974,6 +1016,8 @@ def main():
         default=10,
         help="Number of recent pages to fetch (default: 10)",
     )
+    parser.add_argument("--query", help="Search query text")
+    parser.add_argument("--cql", help="Confluence CQL for search action")
 
     # Config file options
     parser.add_argument(
@@ -1173,6 +1217,57 @@ def main():
             if not pages:
                 print("No recently viewed pages found.")
                 return
+            try:
+                from InquirerPy import inquirer
+            except ImportError:
+                print(
+                    "Error: InquirerPy is required for interactive selection. "
+                    "Install it with `uv add InquirerPy`."
+                )
+                sys.exit(1)
+            try:
+                from rich.console import Console
+                from rich.markdown import Markdown
+            except ImportError:
+                Console = None
+                Markdown = None
+
+            choices = []
+            for page in pages:
+                label = f"{page['title']} - {page['space']} - {page['last_modified']}"
+                choices.append({"name": label, "value": page["url"]})
+
+            selected_url = inquirer.select(
+                message="Select a page", choices=choices
+            ).execute()
+            page_info = client.read_page_content(selected_url)
+            markdown_content = page_info["markdown_content"]
+            if args.raw:
+                client._paginate_text(markdown_content)
+            elif Console and Markdown:
+                render_width = args.width or shutil.get_terminal_size((80, 24)).columns
+                console = Console(width=render_width, record=True)
+                for renderable in client._build_rich_renderables(markdown_content):
+                    console.print(renderable)
+                rendered = console.export_text(styles=True)
+                client._paginate_text(rendered)
+            else:
+                client._paginate_text(markdown_content)
+        elif args.action == "search":
+            cql = None
+            if args.cql:
+                cql = args.cql
+            elif args.query:
+                cql = client._build_text_search_cql(args.query)
+            else:
+                print("Error: --query or --cql is required for search action")
+                sys.exit(1)
+
+            pages = client.search_pages(cql, args.limit)
+            if not pages:
+                print("No search results found.")
+                return
+
             try:
                 from InquirerPy import inquirer
             except ImportError:

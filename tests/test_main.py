@@ -58,6 +58,16 @@ def test_recently_viewed_cql_variants():
     ]
 
 
+def test_build_text_search_cql():
+    """Build CQL with escaped quotes."""
+    client = ConfluenceClient(
+        base_url="https://example.confluence.com",
+        token="test-token",
+    )
+    cql = client._build_text_search_cql('foo "bar"')
+    assert cql == 'type=page AND text~"foo \\"bar\\"" order by lastmodified desc'
+
+
 def test_url_parsing_rejects_non_immediate_segment():
     """Only accept the segment immediately after /pages/."""
     client = ConfluenceClient(
