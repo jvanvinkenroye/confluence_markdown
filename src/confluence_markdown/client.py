@@ -1,4 +1,5 @@
 """Confluence API client and helpers."""
+
 import base64
 import io
 import json
@@ -753,6 +754,7 @@ class ConfluenceClient:
         current_markdown, macro_map = self._html_to_markdown_with_macros(
             page_data["body"]["storage"]["value"]
         )
+        original_macro_map = dict(macro_map)
 
         # Create temporary file with current content
         with tempfile.NamedTemporaryFile(
@@ -803,7 +805,11 @@ class ConfluenceClient:
             with open(temp_file_path, "r") as f:
                 edited_content = f.read()
 
-            macro_map = self._extract_macro_map_from_markdown(edited_content)
+            extracted_macro_map = self._extract_macro_map_from_markdown(edited_content)
+            if extracted_macro_map:
+                macro_map = extracted_macro_map
+            else:
+                macro_map = original_macro_map
             edited_content = self._remove_macro_block(edited_content)
 
             # Remove metadata comments and title
