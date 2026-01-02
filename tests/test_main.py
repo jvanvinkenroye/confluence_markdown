@@ -65,6 +65,20 @@ def test_escape_markdown_heading():
     assert client._escape_markdown_heading(title) == "Title \\#1 \\\\ test next"
 
 
+def test_html_to_markdown_with_macros():
+    """Preserve Confluence macros as placeholders in markdown."""
+    client = ConfluenceClient(
+        base_url="https://example.confluence.com",
+        token="test-token",
+    )
+    html = (
+        '<p>Hi</p><ac:structured-macro ac:name="toc"></ac:structured-macro><p>Bye</p>'
+    )
+    markdown, macro_map = client._html_to_markdown_with_macros(html)
+    assert "[[CONFLUENCE-MACRO-1]]" in markdown
+    assert macro_map["[[CONFLUENCE-MACRO-1]]"].startswith("<ac:structured-macro")
+
+
 def test_client_initialization_with_token():
     """Test client initialization with token."""
     client = ConfluenceClient(base_url="https://example.com", token="test-token")

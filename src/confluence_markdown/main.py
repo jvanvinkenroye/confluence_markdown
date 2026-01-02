@@ -11,13 +11,14 @@ import base64
 import getpass
 import json
 import os
+import re
 import shlex
 import shutil
 import subprocess
 import sys
 import tempfile
 from pathlib import Path
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, Tuple
 from urllib.parse import urlparse
 
 import markdown
@@ -429,6 +430,25 @@ class ConfluenceClient:
 
         return markdown.strip()
 
+    def _html_to_markdown_with_macros(
+        self, html_content: str
+    ) -> Tuple[str, Dict[str, str]]:
+        """Convert HTML to Markdown while preserving Confluence macros."""
+        soup = BeautifulSoup(html_content, "html.parser")
+        macro_map: Dict[str, str] = {}
+        macro_index = 1
+
+        for tag in soup.find_all("ac:structured-macro"):
+            placeholder = f"[[CONFLUENCE-MACRO-{macro_index}]]"
+            macro_map[placeholder] = str(tag)
+            tag.replace_with(placeholder)
+            macro_index += 1
+
+        markdown = markdownify(
+            str(soup), heading_style="ATX", bullets="-", strip=["script", "style"]
+        )
+        return markdown.strip(), macro_map
+
     def _escape_markdown_heading(self, text: str) -> str:
         """Escape characters that can break markdown headings."""
         escaped = text.replace("\r", " ").replace("\n", " ")
@@ -446,6 +466,33 @@ class ConfluenceClient:
         """Print debug output when verbose is enabled."""
         if self.verbose:
             print(f"DEBUG: {message}")
+
+    def _encode_macro_map(self, macro_map: Dict[str, str]) -> str:
+        """Encode macro map for embedding in markdown."""
+        payload = json.dumps(macro_map).encode("utf-8")
+        return base64.b64encode(payload).decode("ascii")
+
+    def _decode_macro_map(self, encoded: str) -> Dict[str, str]:
+        """Decode macro map embedded in markdown."""
+        try:
+            payload = base64.b64decode(encoded.encode("ascii"))
+            return json.loads(payload.decode("utf-8"))
+        except Exception:
+            return {}
+
+    def _extract_macro_map_from_markdown(self, content: str) -> Dict[str, str]:
+        """Extract macro map from the markdown content."""
+        pattern = r"<!-- CONFLUENCE_MACROS_START\n(.*?)\nCONFLUENCE_MACROS_END -->"
+        match = re.search(pattern, content, re.DOTALL)
+        if not match:
+            return {}
+        encoded = match.group(1).strip()
+        return self._decode_macro_map(encoded)
+
+    def _remove_macro_block(self, content: str) -> str:
+        """Remove the macro block from markdown content."""
+        pattern = r"<!-- CONFLUENCE_MACROS_START\n(.*?)\nCONFLUENCE_MACROS_END -->\n?"
+        return re.sub(pattern, "", content, flags=re.DOTALL)
 
     def _markdown_to_html(self, markdown_content: str) -> str:
         """Convert markdown to HTML using proper markdown parser."""
@@ -466,7 +513,9 @@ class ConfluenceClient:
         """
         # Get current page content
         page_data = self.get_page_by_url(page_url)
-        current_markdown = self._html_to_markdown(page_data["body"]["storage"]["value"])
+        current_markdown, macro_map = self._html_to_markdown_with_macros(
+            page_data["body"]["storage"]["value"]
+        )
 
         # Create temporary file with current content
         with tempfile.NamedTemporaryFile(
@@ -480,6 +529,11 @@ class ConfluenceClient:
                 f"<!-- Page ID: {page_data['id']}, Version: {page_data['version']['number']} -->\n\n"
             )
             temp_file.write(current_markdown)
+            if macro_map:
+                encoded_macros = self._encode_macro_map(macro_map)
+                temp_file.write("\n\n<!-- CONFLUENCE_MACROS_START\n")
+                temp_file.write(encoded_macros)
+                temp_file.write("\nCONFLUENCE_MACROS_END -->\n")
             temp_file_path = temp_file.name
 
         try:
@@ -512,6 +566,9 @@ class ConfluenceClient:
             with open(temp_file_path, "r") as f:
                 edited_content = f.read()
 
+            macro_map = self._extract_macro_map_from_markdown(edited_content)
+            edited_content = self._remove_macro_block(edited_content)
+
             # Remove metadata comments and title
             lines = edited_content.split("\n")
             content_lines = []
@@ -527,6 +584,10 @@ class ConfluenceClient:
 
             # Join and clean up
             cleaned_content = "\n".join(content_lines).strip()
+
+            # Restore macro placeholders before converting to HTML
+            for placeholder, macro_html in macro_map.items():
+                cleaned_content = cleaned_content.replace(placeholder, macro_html)
 
             # Convert markdown back to HTML for Confluence
             html_content = self._markdown_to_html(cleaned_content)
