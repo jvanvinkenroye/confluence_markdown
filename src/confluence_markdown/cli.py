@@ -34,7 +34,7 @@ def main():
             "read-recent",
             "search",
         ],
-        default="download",
+        default="read-recent",
         help="Action to perform",
     )
     parser.add_argument(
@@ -51,6 +51,10 @@ def main():
         "--verbose",
         action="store_true",
         help="Enable verbose debug output",
+    )
+    parser.add_argument(
+        "--editor",
+        help="Editor to use for edit actions (e.g., vim, nano, code)",
     )
     parser.add_argument("--content", help="Content to add (for add/create action)")
     parser.add_argument(
@@ -244,6 +248,7 @@ def main():
             password=args.password,
             token=args.token,
             verbose=args.verbose,
+            editor=args.editor,
         )
 
         if args.action == "test-auth":
@@ -307,25 +312,49 @@ def main():
             for page in pages:
                 label = f"{page['title']} - {page['space']} - {page['last_modified']}"
                 choices.append({"name": label, "value": page["url"]})
+            choices.append({"name": "[q] Quit", "value": "__QUIT__"})
 
-            selected_url = inquirer.select(
-                message="Select a page", choices=choices
-            ).execute()
-            print(f"Page URL: {selected_url}")
-            page_info = client.read_page_content(selected_url)
-            markdown_content = page_info["markdown_content"]
-            if args.raw:
-                output = f"{markdown_content}\n\nPage URL: {page_info['url']}"
-                client._paginate_text(output)
-            elif Console and Markdown:
-                render_width = args.width or shutil.get_terminal_size((80, 24)).columns
-                rendered = client._render_markdown_to_ansi(
-                    markdown_content, render_width
-                )
-                client._paginate_text(f"{rendered}\nPage URL: {page_info['url']}")
-            else:
-                output = f"{markdown_content}\n\nPage URL: {page_info['url']}"
-                client._paginate_text(output)
+            # Main loop - keep showing selection until user quits
+            while True:
+                selected_url = inquirer.select(
+                    message="Select a page (q to quit)", choices=choices
+                ).execute()
+
+                if selected_url == "__QUIT__":
+                    print("Bye!")
+                    break
+
+                print(f"Page URL: {selected_url}")
+                page_info = client.read_page_content(selected_url)
+                markdown_content = page_info["markdown_content"]
+
+                # Display with pager and get action
+                if args.raw:
+                    output = f"{markdown_content}\n\nPage URL: {page_info['url']}"
+                    action = client._paginate_text(output, show_actions=True)
+                elif Console and Markdown:
+                    render_width = args.width or shutil.get_terminal_size((80, 24)).columns
+                    rendered = client._render_markdown_to_ansi(
+                        markdown_content, render_width
+                    )
+                    action = client._paginate_text(
+                        f"{rendered}\nPage URL: {page_info['url']}", show_actions=True
+                    )
+                else:
+                    output = f"{markdown_content}\n\nPage URL: {page_info['url']}"
+                    action = client._paginate_text(output, show_actions=True)
+
+                # Handle action from pager
+                if action == "e":
+                    result = client.edit_page_with_editor(selected_url)
+                    if result is None:
+                        print("Edit cancelled or no changes made.")
+                    else:
+                        print("Page updated successfully.")
+                elif action == "q":
+                    print("Bye!")
+                    break
+                # 'b', 'done' or any other returns to selection
         elif args.action == "search":
             cql = None
             if args.cql:

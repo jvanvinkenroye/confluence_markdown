@@ -29,6 +29,7 @@ class ConfluenceClient:
         password: Optional[str] = None,
         token: Optional[str] = None,
         verbose: bool = False,
+        editor: Optional[str] = None,
     ):
         """
         Initialize Confluence client.
@@ -38,11 +39,13 @@ class ConfluenceClient:
             username: Username for basic auth (used with password)
             password: Password or API token for basic auth
             token: Personal Access Token for bearer auth
+            editor: Override editor command (e.g., vim, nano, code)
         """
         self.base_url = base_url.rstrip("/")
         self.api_base = f"{self.base_url}/rest/api"
         self.session = requests.Session()
         self.verbose = verbose
+        self.editor_override = editor
 
         # Set up authentication
         if token:
@@ -540,16 +543,33 @@ class ConfluenceClient:
         macro_map: Dict[str, str] = {}
         macro_index = 1
 
+        # Layout tags are containers, not macros - don't preserve them as placeholders
+        # Their content should be converted to markdown
+        layout_tags = {"ac:layout", "ac:layout-section", "ac:layout-cell"}
+
+        # First, unwrap layout tags so their content becomes part of the document
+        for tag_name in layout_tags:
+            for tag in soup.find_all(tag_name.split(":")[1], namespace="ac"):
+                tag.unwrap()
+        # Also try without namespace
+        for tag in soup.find_all(["ac:layout", "ac:layout-section", "ac:layout-cell"]):
+            if hasattr(tag, 'unwrap'):
+                tag.unwrap()
+
         macro_tags = []
         for tag in soup.find_all(True):
             if not isinstance(tag, Tag):
                 continue
             if not tag.name or not tag.name.startswith("ac:"):
                 continue
+            # Skip layout tags (they should have been unwrapped, but just in case)
+            if tag.name in layout_tags:
+                continue
             if tag.find_parent(
                 lambda parent: isinstance(parent, Tag)
                 and parent.name
                 and parent.name.startswith("ac:")
+                and parent.name not in layout_tags
             ):
                 continue
             macro_tags.append(tag)
@@ -688,21 +708,44 @@ class ConfluenceClient:
 
         return renderables
 
-    def _paginate_text(self, text: str) -> None:
-        """Print text in pages, waiting for user input between chunks."""
+    def _paginate_text(self, text: str, show_actions: bool = False) -> str:
+        """Print text in pages, waiting for user input between chunks.
+
+        Args:
+            text: The text to display
+            show_actions: If True, show [e]dit [b]ack [q]uit options
+
+        Returns:
+            The last action: 'e', 'b', 'q', or 'done' (finished reading)
+        """
         term_height = shutil.get_terminal_size((80, 24)).lines
         page_size = max(5, term_height - 2)
         lines = text.splitlines()
         index = 0
+
+        if show_actions:
+            prompt = "[Enter] more  [e]dit  [b]ack  [q]uit: "
+        else:
+            prompt = "Press Enter for more, or 'q' to quit: "
+
         while index < len(lines):
             chunk = "\n".join(lines[index : index + page_size])
             print(chunk)
             index += page_size
             if index >= len(lines):
                 break
-            choice = input("Press Enter for more, or 'q' to quit: ").strip().lower()
-            if choice == "q":
-                break
+            choice = input(prompt).strip().lower()
+            if choice in ("q", "e", "b"):
+                return choice
+
+        # Finished reading - show final prompt if actions enabled
+        if show_actions:
+            print("\n[e]dit  [b]ack  [q]uit")
+            choice = input("> ").strip().lower()
+            if choice in ("e", "b", "q"):
+                return choice
+
+        return "done"
 
     def _render_markdown_to_ansi(self, markdown_content: str, width: int) -> str:
         """Render markdown with Rich and return ANSI text without printing."""
@@ -778,6 +821,8 @@ class ConfluenceClient:
         try:
             # Detect editor
             editor = self._get_editor()
+            self._debug(f"Detected editor: {editor}")
+            self._debug(f"Temp file path: {temp_file_path}")
 
             print(f"Opening editor: {editor}")
             print(f"Editing page: {page_data['title']}")
@@ -787,23 +832,52 @@ class ConfluenceClient:
 
             # Get original file modification time
             original_mtime = os.path.getmtime(temp_file_path)
+            self._debug(f"Original file mtime: {original_mtime}")
 
-            # Open editor
-            result = subprocess.run(editor + [temp_file_path])
+            # Open editor - use os.system for proper TTY handling with terminal editors
+            editor_cmd = editor + [temp_file_path]
+            editor_name = editor[0].lower()
+            self._debug(f"Editor name: {editor_name}")
+
+            # GUI editors need --wait flag
+            if editor_name == "code":
+                editor_cmd = editor + ["--wait", temp_file_path]
+                self._debug("Added --wait flag for VS Code")
+
+            # Terminal editors (vim, nvim, nano, etc.) need proper TTY
+            terminal_editors = ("vim", "nvim", "vi", "nano", "emacs", "pico", "joe")
+            if editor_name in terminal_editors:
+                # Use os.system for proper TTY handling
+                import shlex
+                cmd_str = " ".join(shlex.quote(arg) for arg in editor_cmd)
+                self._debug(f"Using os.system for terminal editor: {cmd_str}")
+                exit_code = os.system(cmd_str)
+                self._debug(f"os.system exit code (raw): {exit_code}")
+                result = type("Result", (), {"returncode": exit_code >> 8})()
+                self._debug(f"Editor return code: {result.returncode}")
+            else:
+                self._debug(f"Using subprocess.run: {editor_cmd}")
+                result = subprocess.run(editor_cmd)
+                self._debug(f"Editor return code: {result.returncode}")
 
             if result.returncode != 0:
+                self._debug(f"Editor failed with code: {result.returncode}")
                 print("Editor exited with error code. Cancelling upload.")
                 return None
 
             # Check if file was modified
             new_mtime = os.path.getmtime(temp_file_path)
+            self._debug(f"New file mtime: {new_mtime}")
             if new_mtime == original_mtime:
+                self._debug("File mtime unchanged - no modifications detected")
                 print("File was not modified. No changes to upload.")
                 return None
 
+            self._debug("File was modified, reading content...")
             # Read edited content
             with open(temp_file_path, "r") as f:
                 edited_content = f.read()
+            self._debug(f"Read {len(edited_content)} bytes from temp file")
 
             extracted_macro_map = self._extract_macro_map_from_markdown(edited_content)
             if extracted_macro_map:
@@ -866,7 +940,15 @@ class ConfluenceClient:
 
     def _get_editor(self) -> List[str]:
         """Get the preferred editor from environment or defaults."""
-        # Try EDITOR environment variable first
+        # Check for command-line override first
+        if self.editor_override:
+            editor_parts = shlex.split(self.editor_override)
+            if editor_parts and shutil.which(editor_parts[0]):
+                self._debug(f"Using editor override: {editor_parts}")
+                return editor_parts
+            self._debug(f"Editor override not found: {self.editor_override}")
+
+        # Try EDITOR environment variable
         editor = os.environ.get("EDITOR")
         if editor:
             editor_parts = shlex.split(editor)
