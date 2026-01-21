@@ -14,6 +14,7 @@ from urllib.parse import urlparse
 
 import markdown
 import requests
+import yaml
 from bs4 import BeautifulSoup
 from bs4.element import Tag
 from markdownify import markdownify
@@ -30,6 +31,7 @@ class ConfluenceClient:
         token: Optional[str] = None,
         verbose: bool = False,
         editor: Optional[str] = None,
+        table_format: str = "markdown",
     ):
         """
         Initialize Confluence client.
@@ -40,12 +42,14 @@ class ConfluenceClient:
             password: Password or API token for basic auth
             token: Personal Access Token for bearer auth
             editor: Override editor command (e.g., vim, nano, code)
+            table_format: Format for tables during editing: 'markdown' or 'yaml'
         """
         self.base_url = base_url.rstrip("/")
         self.api_base = f"{self.base_url}/rest/api"
         self.session = requests.Session()
         self.verbose = verbose
         self.editor_override = editor
+        self.table_format = table_format
 
         # Set up authentication
         if token:
@@ -535,6 +539,207 @@ class ConfluenceClient:
 
         return markdown.strip()
 
+    def _html_cell_to_text(self, cell) -> str:
+        """Convert HTML cell content (lists, paragraphs) to readable text."""
+        lines = []
+
+        def process_element(el, indent=0):
+            """Recursively process HTML elements to text."""
+            if isinstance(el, str):
+                text = el.strip()
+                if text:
+                    lines.append("  " * indent + text)
+                return
+
+            if not hasattr(el, 'name'):
+                return
+
+            if el.name == 'p':
+                text = el.get_text(strip=True)
+                if text:
+                    lines.append("  " * indent + text)
+            elif el.name == 'br':
+                lines.append("")
+            elif el.name in ['ul', 'ol']:
+                for li in el.find_all('li', recursive=False):
+                    process_li(li, indent)
+            elif el.name == 'strong':
+                text = el.get_text(strip=True)
+                if text:
+                    lines.append("  " * indent + f"**{text}**")
+            elif el.name == 'em':
+                text = el.get_text(strip=True)
+                if text:
+                    lines.append("  " * indent + f"*{text}*")
+            else:
+                # Process children
+                for child in el.children:
+                    process_element(child, indent)
+
+        def process_li(li, indent=0):
+            """Process a list item, handling nested lists."""
+            # Get direct text content (not from nested lists)
+            direct_text = []
+            nested_list = None
+            for child in li.children:
+                if hasattr(child, 'name') and child.name in ['ul', 'ol']:
+                    nested_list = child
+                elif hasattr(child, 'name') and child.name == 'strong':
+                    direct_text.append(f"**{child.get_text(strip=True)}**")
+                elif hasattr(child, 'name') and child.name == 'em':
+                    direct_text.append(f"*{child.get_text(strip=True)}*")
+                elif hasattr(child, 'name') and child.name == 'p':
+                    direct_text.append(child.get_text(strip=True))
+                elif isinstance(child, str):
+                    text = child.strip()
+                    if text:
+                        direct_text.append(text)
+                elif hasattr(child, 'get_text'):
+                    text = child.get_text(strip=True)
+                    if text:
+                        direct_text.append(text)
+
+            text = " ".join(direct_text).strip()
+            if text:
+                lines.append("  " * indent + "- " + text)
+
+            # Process nested list with increased indent
+            if nested_list:
+                for nested_li in nested_list.find_all('li', recursive=False):
+                    process_li(nested_li, indent + 1)
+
+        # Process all top-level children
+        for child in cell.children:
+            process_element(child, 0)
+
+        return "\n".join(lines)
+
+    def _text_to_html_cell(self, text: str) -> str:
+        """Convert readable text format back to HTML for Confluence."""
+        lines = text.strip().split("\n")
+        result = []
+        list_stack = []  # Stack of (indent_level, list_tag)
+
+        for line in lines:
+            if not line.strip():
+                if not list_stack:
+                    result.append("<br/>")
+                continue
+
+            # Count leading spaces (2 spaces = 1 indent level)
+            stripped = line.lstrip()
+            indent = (len(line) - len(stripped)) // 2
+
+            # Close lists if indent decreased
+            while list_stack and list_stack[-1][0] >= indent and not stripped.startswith("- "):
+                _, tag = list_stack.pop()
+                result.append(f"</{tag}>")
+
+            if stripped.startswith("- "):
+                # List item
+                content = stripped[2:]
+                # Convert markdown bold/italic
+                content = re.sub(r'\*\*(.+?)\*\*', r'<strong>\1</strong>', content)
+                content = re.sub(r'\*(.+?)\*', r'<em>\1</em>', content)
+
+                # Open new list if needed
+                if not list_stack or list_stack[-1][0] < indent:
+                    result.append("<ul>")
+                    list_stack.append((indent, "ul"))
+
+                result.append(f"<li>{content}</li>")
+            else:
+                # Regular text - close any open lists first
+                while list_stack:
+                    _, tag = list_stack.pop()
+                    result.append(f"</{tag}>")
+
+                # Convert markdown bold/italic
+                content = re.sub(r'\*\*(.+?)\*\*', r'<strong>\1</strong>', stripped)
+                content = re.sub(r'\*(.+?)\*', r'<em>\1</em>', content)
+                result.append(f"<p>{content}</p>")
+
+        # Close any remaining open lists
+        while list_stack:
+            _, tag = list_stack.pop()
+            result.append(f"</{tag}>")
+
+        return "".join(result)
+
+    def _restore_lists_in_cells(self, html_content: str) -> str:
+        """Convert text-format lists in table cells back to HTML lists."""
+        # Use regex to find and process table cells
+        def process_cell(match):
+            tag = match.group(1)  # td or th
+            content = match.group(2)
+            closing = match.group(3)
+
+            # Check if cell contains list-like patterns
+            if "<br/>" in content and "- " in content:
+                lines = re.split(r'<br\s*/?>', content)
+                converted = self._lines_to_html_list(lines)
+                return f"<{tag}>{converted}</{closing}>"
+            return match.group(0)
+
+        # Match <td>...</td> and <th>...</th>
+        pattern = r'<(td|th)(?:\s[^>]*)?>(.+?)</(\1)>'
+        return re.sub(pattern, process_cell, html_content, flags=re.DOTALL | re.IGNORECASE)
+
+    def _lines_to_html_list(self, lines: List[str]) -> str:
+        """Convert lines with list markers to HTML list structure."""
+        result = []
+        list_stack = []  # Stack of indent levels
+
+        for line in lines:
+            stripped = line.strip()
+            if not stripped:
+                continue
+
+            # Count leading whitespace for indent (2 spaces or &nbsp; = 1 level)
+            indent = 0
+            temp = line
+            while temp.startswith("  ") or temp.startswith("&nbsp;&nbsp;"):
+                indent += 1
+                if temp.startswith("  "):
+                    temp = temp[2:]
+                else:
+                    temp = temp[12:]  # len("&nbsp;&nbsp;")
+            stripped = temp.strip()
+
+            # Check for list item marker
+            if stripped.startswith("- "):
+                content = stripped[2:]
+
+                # Close deeper lists if indent decreased
+                while list_stack and list_stack[-1] > indent:
+                    list_stack.pop()
+                    result.append("</li></ul>")
+
+                # Close previous li at same level
+                if list_stack and list_stack[-1] == indent:
+                    result.append("</li>")
+
+                # Open new list if this is first item or deeper indent
+                if not list_stack or list_stack[-1] < indent:
+                    result.append("<ul>")
+                    list_stack.append(indent)
+
+                result.append(f"<li>{content}")
+            else:
+                # Not a list item - close all lists first
+                while list_stack:
+                    list_stack.pop()
+                    result.append("</li></ul>")
+                # Just add the content without wrapping (it may already have tags)
+                result.append(stripped)
+
+        # Close remaining lists
+        while list_stack:
+            list_stack.pop()
+            result.append("</li></ul>")
+
+        return "".join(result)
+
     def _html_to_markdown_with_macros(
         self, html_content: str
     ) -> Tuple[str, Dict[str, str]]:
@@ -580,9 +785,39 @@ class ConfluenceClient:
             tag.replace_with(placeholder)
             macro_index += 1
 
+        # Protect complex content inside table cells (lists, multiple paragraphs, etc.)
+        # Markdown tables don't support block-level content in cells
+        # Keep as HTML to avoid breaking the structure
+        cell_content_map: Dict[str, str] = {}
+        cell_index = 1
+        for td in soup.find_all(["td", "th"]):
+            # Check if cell has block-level elements that markdown can't handle
+            has_complex_content = td.find(["ul", "ol"])
+            if has_complex_content:
+                placeholder = f"[[CELL-HTML-{cell_index}]]"
+                # Store original HTML
+                cell_content_map[placeholder] = "".join(str(c) for c in td.children)
+                td.clear()
+                td.string = placeholder
+                cell_index += 1
+
+        # Protect <br> tags in remaining cells
+        br_placeholder = "[[BR]]"
+        for td in soup.find_all(["td", "th"]):
+            for br in td.find_all("br"):
+                br.replace_with(br_placeholder)
+
         markdown = markdownify(
             str(soup), heading_style="ATX", bullets="-", strip=["script", "style"]
         )
+
+        # Restore <br> tags
+        markdown = markdown.replace(br_placeholder, "<br/>")
+
+        # Restore complex cell content as HTML (safe, no conversion)
+        for placeholder, html_content in cell_content_map.items():
+            markdown = markdown.replace(placeholder, html_content)
+
         return markdown.strip(), macro_map
 
     def _escape_markdown_heading(self, text: str) -> str:
@@ -629,6 +864,114 @@ class ConfluenceClient:
         if stripped.endswith("|"):
             stripped = stripped[:-1]
         return [cell.strip() for cell in stripped.split("|")]
+
+    def _parse_markdown_table(self, table_lines: List[str]) -> Tuple[List[str], List[Dict[str, str]]]:
+        """Parse markdown table lines into headers and row dicts."""
+        if len(table_lines) < 2:
+            return [], []
+
+        # Parse header
+        headers = self._split_table_row(table_lines[0])
+
+        # Skip separator line, parse data rows
+        rows = []
+        for line in table_lines[2:]:
+            cells = self._split_table_row(line)
+            row_dict = {}
+            for i, header in enumerate(headers):
+                row_dict[header] = cells[i] if i < len(cells) else ""
+            rows.append(row_dict)
+
+        return headers, rows
+
+    def _table_to_yaml(self, headers: List[str], rows: List[Dict[str, str]]) -> str:
+        """Convert table data to YAML format."""
+        data = {"_headers": headers, "rows": rows}
+        return yaml.dump(data, default_flow_style=False, allow_unicode=True, sort_keys=False)
+
+    def _yaml_to_table(self, yaml_text: str) -> str:
+        """Convert YAML back to markdown table."""
+        data = yaml.safe_load(yaml_text)
+        headers = data.get("_headers", [])
+        rows = data.get("rows", [])
+
+        if not headers:
+            if rows:
+                headers = list(rows[0].keys())
+            else:
+                return ""
+
+        def normalize_cell(val: Any) -> str:
+            """Normalize cell value, preserving line breaks as <br/>."""
+            s = str(val) if val is not None else ""
+            # Replace newlines with <br/> for XHTML (markdown tables can't have newlines)
+            s = s.replace("\n", "<br/>")
+            return s
+
+        # Calculate column widths (using normalized values)
+        widths = {h: len(h) for h in headers}
+        for row in rows:
+            for h in headers:
+                val = normalize_cell(row.get(h, ""))
+                widths[h] = max(widths[h], len(val))
+
+        # Build table
+        lines = []
+        header_cells = [h.ljust(widths[h]) for h in headers]
+        lines.append("| " + " | ".join(header_cells) + " |")
+        sep_cells = ["-" * widths[h] for h in headers]
+        lines.append("| " + " | ".join(sep_cells) + " |")
+        for row in rows:
+            cells = [normalize_cell(row.get(h, "")).ljust(widths[h]) for h in headers]
+            lines.append("| " + " | ".join(cells) + " |")
+
+        return "\n".join(lines)
+
+    def _convert_tables_to_yaml(self, md_content: str) -> str:
+        """Find markdown tables and convert them to YAML blocks."""
+        lines = md_content.split('\n')
+        result = []
+        i = 0
+        table_num = 1
+
+        while i < len(lines):
+            line = lines[i]
+
+            # Check if this is the start of a table
+            if line.strip().startswith('|') and '|' in line[1:]:
+                table_lines = []
+                while i < len(lines) and lines[i].strip().startswith('|'):
+                    table_lines.append(lines[i])
+                    i += 1
+
+                # Check if it's a valid table (has separator)
+                if len(table_lines) >= 2 and self._is_table_separator(table_lines[1]):
+                    headers, rows = self._parse_markdown_table(table_lines)
+                    if headers and rows:
+                        yaml_content = self._table_to_yaml(headers, rows)
+                        result.append(f"```yaml table-{table_num}")
+                        result.append(yaml_content.rstrip())
+                        result.append("```")
+                        table_num += 1
+                        continue
+
+                # Not a valid table, keep original
+                result.extend(table_lines)
+            else:
+                result.append(line)
+                i += 1
+
+        return '\n'.join(result)
+
+    def _convert_yaml_to_tables(self, content: str) -> str:
+        """Convert YAML table blocks back to markdown tables."""
+        pattern = r'```yaml table-\d+\n(.*?)```'
+
+        def replace_yaml_block(match):
+            yaml_content = match.group(1)
+            return self._yaml_to_table(yaml_content)
+
+        return re.sub(pattern, replace_yaml_block, content, flags=re.DOTALL)
 
     def _build_rich_renderables(self, markdown_content: str) -> list:
         """Build Rich renderables from markdown with table support."""
@@ -780,6 +1123,8 @@ class ConfluenceClient:
         # Use markdown library with table support
         md = markdown.Markdown(extensions=["tables", "fenced_code", "nl2br"])
         html_content = md.convert(markdown_content)
+        # Convert HTML5 <br> to XHTML <br/> for Confluence compatibility
+        html_content = re.sub(r'<br\s*/?>', '<br/>', html_content)
         return html_content
 
     def edit_page_with_editor(self, page_url: str) -> dict:
@@ -799,6 +1144,12 @@ class ConfluenceClient:
         )
         original_macro_map = dict(macro_map)
 
+        # Convert tables to YAML if requested
+        edit_content = current_markdown
+        if self.table_format == "yaml":
+            edit_content = self._convert_tables_to_yaml(current_markdown)
+            self._debug("Converted tables to YAML format")
+
         # Create temporary file with current content
         with tempfile.NamedTemporaryFile(
             mode="w", suffix=".md", delete=False
@@ -810,7 +1161,9 @@ class ConfluenceClient:
             temp_file.write(
                 f"<!-- Page ID: {page_data['id']}, Version: {page_data['version']['number']} -->\n\n"
             )
-            temp_file.write(current_markdown)
+            if self.table_format == "yaml":
+                temp_file.write("<!-- Tables are in YAML format for easier editing -->\n\n")
+            temp_file.write(edit_content)
             if macro_map:
                 encoded_macros = self._encode_macro_map(macro_map)
                 temp_file.write("\n\n<!-- CONFLUENCE_MACROS_START\n")
@@ -886,6 +1239,11 @@ class ConfluenceClient:
                 macro_map = original_macro_map
             edited_content = self._remove_macro_block(edited_content)
 
+            # Convert YAML table blocks back to markdown tables
+            if self.table_format == "yaml":
+                edited_content = self._convert_yaml_to_tables(edited_content)
+                self._debug("Converted YAML blocks back to markdown tables")
+
             # Remove metadata comments and title
             lines = edited_content.split("\n")
             content_lines = []
@@ -902,12 +1260,21 @@ class ConfluenceClient:
             # Join and clean up
             cleaned_content = "\n".join(content_lines).strip()
 
-            # Restore macro placeholders before converting to HTML
-            for placeholder, macro_html in macro_map.items():
-                cleaned_content = cleaned_content.replace(placeholder, macro_html)
-
-            # Convert markdown back to HTML for Confluence
+            # Convert markdown to HTML first (with placeholders intact)
             html_content = self._markdown_to_html(cleaned_content)
+
+            # Restore macro placeholders AFTER HTML conversion
+            # This prevents the markdown parser from corrupting macro XML
+            for placeholder, macro_html in macro_map.items():
+                # Handle case where placeholder is wrapped in <p> tags
+                html_content = html_content.replace(f"<p>{placeholder}</p>", macro_html)
+                html_content = html_content.replace(placeholder, macro_html)
+
+            # Final XHTML cleanup - ensure all <br> tags are self-closing
+            html_content = re.sub(r'<br\s*(?!/)>', '<br/>', html_content)
+
+            self._debug(f"Final HTML length: {len(html_content)}")
+            self._debug(f"Final HTML (first 1000 chars): {html_content[:1000]}")
 
             # Update page
             update_data = {
@@ -921,6 +1288,11 @@ class ConfluenceClient:
 
             url = f"{self.api_base}/content/{page_data['id']}"
             response = self.session.put(url, json=update_data)
+            self._debug(f"Update response status: {response.status_code}")
+            if response.status_code != 200:
+                self._debug(f"Update response body: {response.text[:2000]}")
+                print(f"ERROR: HTTP {response.status_code}")
+                print(f"ERROR: {response.text[:500]}")
             if response.status_code == 409:
                 raise RuntimeError(
                     "Confluence rejected the update due to a version conflict. "

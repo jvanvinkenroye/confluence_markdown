@@ -56,6 +56,12 @@ def main():
         "--editor",
         help="Editor to use for edit actions (e.g., vim, nano, code)",
     )
+    parser.add_argument(
+        "--table-format",
+        choices=["markdown", "yaml"],
+        default="markdown",
+        help="Table format during editing: markdown (default) or yaml (easier to edit)",
+    )
     parser.add_argument("--content", help="Content to add (for add/create action)")
     parser.add_argument(
         "--content-type",
@@ -249,6 +255,7 @@ def main():
             token=args.token,
             verbose=args.verbose,
             editor=args.editor,
+            table_format=args.table_format,
         )
 
         if args.action == "test-auth":
