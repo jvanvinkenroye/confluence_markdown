@@ -1067,6 +1067,27 @@ class ConfluenceClient:
             tag.replace_with(placeholder)
             macro_index += 1
 
+        # Check for complex tables that can't be converted to markdown
+        # (tables with colspan/rowspan attributes)
+        complex_table_map: Dict[str, str] = {}
+        complex_table_index = 1
+        for table in soup.find_all("table"):
+            has_merged_cells = False
+            for cell in table.find_all(["td", "th"]):
+                colspan = cell.get("colspan")
+                rowspan = cell.get("rowspan")
+                if (colspan and colspan != "1") or (rowspan and rowspan != "1"):
+                    has_merged_cells = True
+                    break
+
+            if has_merged_cells:
+                # Keep entire table as HTML
+                placeholder = f"[[COMPLEX-TABLE-{complex_table_index}]]"
+                complex_table_map[placeholder] = str(table)
+                table.replace_with(placeholder)
+                complex_table_index += 1
+                self._debug("Preserved complex table as HTML (has merged cells)")
+
         # Protect complex content inside table cells (lists, multiple paragraphs, etc.)
         # Markdown tables don't support block-level content in cells
         # Keep as HTML to avoid breaking the structure
@@ -1099,6 +1120,12 @@ class ConfluenceClient:
         # Restore complex cell content as HTML (safe, no conversion)
         for placeholder, html_content in cell_content_map.items():
             markdown = markdown.replace(placeholder, html_content)
+
+        # Restore complex tables as HTML (with a note)
+        for placeholder, table_html in complex_table_map.items():
+            # Add HTML comment to indicate this is a preserved complex table
+            preserved_table = f"\n<!-- Complex table preserved as HTML (has merged cells) -->\n{table_html}\n"
+            markdown = markdown.replace(placeholder, preserved_table)
 
         return markdown.strip(), macro_map
 
