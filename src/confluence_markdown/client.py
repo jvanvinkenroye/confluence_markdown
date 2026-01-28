@@ -27,6 +27,8 @@ from tenacity import (
     before_sleep_log,
 )
 
+from .cache import Cache
+
 logger = logging.getLogger(__name__)
 
 
@@ -42,6 +44,8 @@ class ConfluenceClient:
         verbose: bool = False,
         editor: Optional[str] = None,
         table_format: str = "markdown",
+        cache_enabled: bool = True,
+        cache_ttl: int = 3600,
     ):
         """
         Initialize Confluence client.
@@ -53,6 +57,8 @@ class ConfluenceClient:
             token: Personal Access Token for bearer auth
             editor: Override editor command (e.g., vim, nano, code)
             table_format: Format for tables during editing: 'markdown' or 'yaml'
+            cache_enabled: Whether to enable response caching (default: True)
+            cache_ttl: Cache time-to-live in seconds (default: 3600)
         """
         self.base_url = base_url.rstrip("/")
         self.api_base = f"{self.base_url}/rest/api"
@@ -60,6 +66,7 @@ class ConfluenceClient:
         self.verbose = verbose
         self.editor_override = editor
         self.table_format = table_format
+        self.cache = Cache(enabled=cache_enabled, ttl=cache_ttl)
 
         # Set up authentication
         if token:
@@ -302,8 +309,17 @@ class ConfluenceClient:
 
         return pages
 
-    def list_recently_viewed_pages(self, limit: int = 10) -> list:
+    def list_recently_viewed_pages(self, limit: int = 10, use_cache: bool = True) -> list:
         """List recently viewed pages for the current user."""
+        cache_key = f"recently_viewed:{self.base_url}:{limit}"
+
+        # Try cache first
+        if use_cache:
+            cached = self.cache.get(cache_key)
+            if cached is not None:
+                self._debug("Using cached recently viewed pages")
+                return cached
+
         url = f"{self.api_base}/search"
         self._debug(f"Fetching recently viewed pages from: {url}")
         data = None
@@ -350,6 +366,8 @@ class ConfluenceClient:
                 }
             )
 
+        # Cache the result
+        self.cache.set(cache_key, pages)
         return pages
 
     def search_pages(self, cql: str, limit: int = 10) -> list:
@@ -763,6 +781,32 @@ class ConfluenceClient:
                 break
 
         self._debug("No page ID found in URL")
+        return None
+
+    def _extract_space_key_from_url(self, page_url: str) -> Optional[str]:
+        """Extract space key from Confluence URL."""
+        if not page_url:
+            return None
+
+        parsed = urlparse(page_url)
+
+        # Format: /spaces/SPACEKEY/... or /display/SPACEKEY/...
+        path_parts = parsed.path.split("/")
+        for i, part in enumerate(path_parts):
+            if part in ("spaces", "display") and i + 1 < len(path_parts):
+                space_key = path_parts[i + 1]
+                # Skip user spaces (start with ~)
+                if not space_key.startswith("~"):
+                    return space_key
+                # For user spaces, return the full key
+                return space_key
+
+        # Try to get from spaceKey query param
+        if "spaceKey=" in parsed.query:
+            for param in parsed.query.split("&"):
+                if param.startswith("spaceKey="):
+                    return param.split("=")[1]
+
         return None
 
     def _html_to_markdown(self, html_content: str) -> str:

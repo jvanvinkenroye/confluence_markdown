@@ -72,3 +72,54 @@ class ConfigManager:
             print(f"✅ Profile '{profile}' deleted")
         else:
             print(f"❌ Profile '{profile}' not found")
+
+    def get_space_config(self, profile: str, space_key: str) -> Dict[str, Any]:
+        """
+        Get configuration for a specific space, merged with profile defaults.
+
+        Config structure:
+        {
+            "default": {
+                "base_url": "...",
+                "username": "...",
+                "token": "...",
+                "editor": "vim",
+                "table_format": "markdown",
+                "spaces": {
+                    "DOCS": {"editor": "code", "table_format": "yaml"},
+                    "WIKI": {"editor": "nano"}
+                }
+            }
+        }
+        """
+        profile_config = self.load_config(profile) or {}
+
+        # Start with profile-level settings (excluding 'spaces')
+        merged = {k: v for k, v in profile_config.items() if k != "spaces"}
+
+        # Merge space-specific settings if available
+        spaces_config = profile_config.get("spaces", {})
+        if space_key and space_key in spaces_config:
+            merged.update(spaces_config[space_key])
+
+        return merged
+
+    def save_space_config(
+        self, profile: str, space_key: str, space_settings: Dict[str, Any]
+    ):
+        """Save space-specific configuration."""
+        configs = self.load_all_configs()
+        if profile not in configs:
+            configs[profile] = {}
+
+        if "spaces" not in configs[profile]:
+            configs[profile]["spaces"] = {}
+
+        configs[profile]["spaces"][space_key] = space_settings
+
+        self.ensure_config_dir()
+        with open(self.config_file, "w") as f:
+            json.dump(configs, f, indent=2)
+        os.chmod(self.config_file, 0o600)
+
+        print(f"✅ Space config saved for {space_key} (profile: {profile})")

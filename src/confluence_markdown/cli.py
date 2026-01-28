@@ -11,6 +11,7 @@ from typing import Any
 
 import argcomplete
 
+from .cache import Cache
 from .client import ConfluenceClient
 from .config import ConfigManager
 from .exceptions import AuthenticationError, ConfigurationError, ConfluenceError
@@ -184,6 +185,19 @@ def create_parser() -> argparse.ArgumentParser:
         action="store_true",
         help="Initialize empty config file structure",
     )
+
+    # Cache options
+    parser.add_argument(
+        "--no-cache",
+        action="store_true",
+        help="Disable response caching",
+    )
+    parser.add_argument(
+        "--clear-cache",
+        action="store_true",
+        help="Clear all cached data and exit",
+    )
+
     parser.add_argument(
         "--completion",
         choices=["bash", "zsh"],
@@ -307,6 +321,41 @@ def validate_auth(args: argparse.Namespace) -> None:
         )
 
 
+def apply_space_config(
+    args: argparse.Namespace, config_manager: ConfigManager
+) -> None:
+    """Apply space-specific configuration if URL is provided."""
+    if not args.url:
+        return
+
+    # Extract space key from URL
+    from urllib.parse import urlparse
+
+    parsed = urlparse(args.url)
+    path_parts = parsed.path.split("/")
+
+    space_key = None
+    for i, part in enumerate(path_parts):
+        if part in ("spaces", "display") and i + 1 < len(path_parts):
+            space_key = path_parts[i + 1]
+            break
+
+    if not space_key:
+        return
+
+    # Get space-specific config
+    space_config = config_manager.get_space_config(args.profile, space_key)
+
+    # Apply space-specific settings (only if not already set via CLI)
+    if not args.editor and "editor" in space_config:
+        args.editor = space_config["editor"]
+        logger.debug("Using space-specific editor: %s", args.editor)
+
+    if args.table_format == "markdown" and "table_format" in space_config:
+        args.table_format = space_config["table_format"]
+        logger.debug("Using space-specific table format: %s", args.table_format)
+
+
 def create_client(args: argparse.Namespace) -> ConfluenceClient:
     """Create and return a configured ConfluenceClient."""
     return ConfluenceClient(
@@ -317,6 +366,7 @@ def create_client(args: argparse.Namespace) -> ConfluenceClient:
         verbose=args.verbose,
         editor=args.editor,
         table_format=args.table_format,
+        cache_enabled=not getattr(args, "no_cache", False),
     )
 
 
@@ -747,6 +797,13 @@ def main():
             print('eval "$(register-python-argcomplete confluence-markdown)"')
         sys.exit(0)
 
+    # Handle clear-cache (no auth needed)
+    if args.clear_cache:
+        cache = Cache()
+        count = cache.clear()
+        print(f"Cleared {count} cached entries.")
+        sys.exit(0)
+
     # Setup logging
     setup_logging(args.verbose, args.quiet)
 
@@ -771,6 +828,9 @@ def main():
         load_credentials(args, config_manager)
         save_config_if_requested(args, config_manager)
         validate_auth(args)
+
+        # Apply space-specific configuration
+        apply_space_config(args, config_manager)
 
         # Create client and execute action
         client = create_client(args)
