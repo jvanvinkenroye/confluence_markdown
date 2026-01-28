@@ -1,409 +1,418 @@
 # Confluence Data Center Markdown Tool
 
-A Python tool to download, read, and update Confluence Data Center pages with markdown support.
+A Python CLI tool to download, read, edit, and manage Confluence Data Center pages with markdown support.
 
 ## Features
 
+### Core Features
 - Download Confluence pages as markdown files
-- Read page content directly in terminal
+- Read page content directly in terminal with Rich rendering
+- Edit pages in your preferred editor (vim, VS Code, nano, etc.)
 - Add content to existing pages (markdown or HTML)
 - Create new pages with templates
-- Interactive page selection
-- Read recently viewed pages with Rich rendering
+- Create task pages with Page Properties macro
+
+### Navigation & Search
+- Interactive page selection with fzf or InquirerPy
+- Browse recently viewed pages
 - Edit recently edited pages
-- Search pages by text or CQL
-- Manual paging for long output
-- Support for multiple authentication methods
-- Save credentials in config file for easy reuse
-- Support for multiple configuration profiles
-- Verbose debug mode for troubleshooting
+- Search pages by text or CQL query
+- List child pages (with recursive option)
+
+### Batch Operations
+- Download entire page trees recursively
+- Parallel API calls for faster batch operations
+- Export multiple pages to a directory
+
+### Quality of Life
+- Response caching for faster repeated access
+- Per-space configuration (different editors/settings per space)
+- Shell tab completion (bash/zsh)
+- Rate limiting and automatic retry on errors
+- Complex table preservation (colspan/rowspan)
+- YAML table format for easier editing
+
+### Configuration
+- Save credentials in config file
+- Multiple configuration profiles
+- Space-specific settings
 
 ## Installation
 
-### Using uv tool (recommended - global install)
-
-Install the tool globally so you can use it from anywhere:
+### Using uv tool (recommended)
 
 ```bash
 # Clone the repository
-git clone <repository-url>
-cd confluence-markdown
+git clone https://github.com/jvanvinkenroye/confluence_markdown.git
+cd confluence_markdown
 
-# Install globally with uv tool
+# Install globally
 uv tool install --editable .
 
-# Now use from anywhere!
+# Now use from anywhere
 confluence-markdown --help
-confluence-markdown --config --action test-auth
-```
-
-**Benefits:**
-- Available globally (no need for `uv run`)
-- Isolated environment (no conflicts with other projects)
-- Editable mode (code changes reflect immediately)
-- Fast execution
-
-**Management:**
-```bash
-# Uninstall
-uv tool uninstall confluence-markdown
-
-# List installed tools
-uv tool list
 ```
 
 ### Using uv (development)
 
-For development work in the project directory:
-
 ```bash
-# Clone the repository
-git clone <repository-url>
-cd confluence-markdown
-
-# Install dependencies
+cd confluence_markdown
 uv sync
-
-# Run with uv
 uv run confluence-markdown --help
 ```
 
-### Using pip
+### Enable Tab Completion
 
 ```bash
-# Clone and install
-git clone <repository-url>
-cd confluence-markdown
-pip install .
+# For bash - add to ~/.bashrc
+eval "$(register-python-argcomplete confluence-markdown)"
 
-# Run directly
-confluence-markdown --help
+# For zsh - add to ~/.zshrc
+autoload -U bashcompinit && bashcompinit
+eval "$(register-python-argcomplete confluence-markdown)"
 ```
 
-## Authentication Methods
+## Quick Start
 
-### Personal Access Token (PAT) - Recommended for Confluence DC 7.9+
+### 1. Save your credentials
 
-For Confluence Data Center, use your PAT with your username:
 ```bash
-confluence-markdown \
-  --base-url https://confluence.company.com \
-  --username YOUR_USERNAME \
-  --token YOUR_PAT \
-  URL
-```
-
-### Username/Password or API Token
-
-For older versions or if PAT is not available:
-```bash
-confluence-markdown \
-  --base-url https://confluence.company.com \
-  --username YOUR_USERNAME \
-  --password YOUR_PASSWORD_OR_API_TOKEN \
-  URL
-```
-
-## Configuration File Support
-
-The tool supports saving credentials in a config file located at `~/.config/confluence-markdown/config.json`.
-
-### Initialize Config File
-
-Create an empty config file structure:
-```bash
-confluence-markdown --init-config
-```
-This creates `~/.config/confluence-markdown/config.json` with secure permissions (600).
-
-### Save Configuration
-
-Save your credentials for easy reuse:
-```bash
-# Save config with PAT
 confluence-markdown \
   --base-url https://confluence.company.com \
   --username YOUR_USERNAME \
   --token YOUR_PAT \
   --save-config \
   --action test-auth
-
-# Save config with password (interactive prompt)
-confluence-markdown \
-  --base-url https://confluence.company.com \
-  --username YOUR_USERNAME \
-  --save-config \
-  --action test-auth
 ```
 
-### Use Saved Configuration
+### 2. Browse recent pages
 
-Once saved, the default profile is loaded automatically:
 ```bash
-# Use default profile automatically
-confluence-markdown --action test-auth
+# Interactive selection with fzf
+confluence-markdown --action read-recent
 
-# Use specific profile
-confluence-markdown --config --profile work URL
+# Use arrow keys if fzf not installed
+confluence-markdown --action read-recent --no-fzf
 ```
 
-### Manage Profiles
+### 3. Edit a page
 
-Create multiple profiles for different Confluence instances:
 ```bash
-# Save to specific profile
-confluence-markdown \
-  --base-url https://work.confluence.com \
-  --username work_user \
-  --token WORK_TOKEN \
-  --save-config \
-  --profile work \
-  --action test-auth
-
-# List all profiles
-confluence-markdown --list-profiles
-
-# Delete a profile
-confluence-markdown --delete-profile --profile old_profile
+confluence-markdown --action edit "https://confluence.company.com/pages/viewpage.action?pageId=12345"
 ```
 
 ## Usage Examples
 
-### Test Authentication
+### Reading Pages
 
-Verify your credentials are working:
 ```bash
-confluence-markdown \
-  --base-url https://confluence.company.com \
-  --username YOUR_USERNAME \
-  --token YOUR_PAT \
-  --action test-auth
-```
+# Browse recently viewed pages (default action)
+confluence-markdown
 
-### Download Page as Markdown
+# Read specific page
+confluence-markdown --action read "PAGE_URL"
 
-Download a Confluence page and save as markdown:
-```bash
-confluence-markdown \
-  --base-url https://confluence.company.com \
-  --username YOUR_USERNAME \
-  --token YOUR_PAT \
-  --output page.md \
-  "https://confluence.company.com/spaces/SPACE/pages/12345/Page+Title"
-```
-
-### Read Page Content
-
-Display page content in terminal without saving:
-```bash
-confluence-markdown \
-  --base-url https://confluence.company.com \
-  --username YOUR_USERNAME \
-  --token YOUR_PAT \
-  --action read \
-  "https://confluence.company.com/pages/viewpage.action?pageId=12345"
-```
-
-### Read Recently Viewed Pages
-
-Select a recently viewed page and render it with Rich:
-```bash
-confluence-markdown --action read-recent --limit 10
-```
-
-Show raw markdown instead:
-```bash
+# Read with raw markdown output
 confluence-markdown --action read-recent --raw
+
+# Search and read
+confluence-markdown --action search --query "deployment guide"
 ```
 
-### Edit Recently Edited Pages
+### Editing Pages
 
-Select a recently edited page and open it in your editor:
 ```bash
-confluence-markdown --action edit-recent --limit 10
+# Edit specific page
+confluence-markdown --action edit "PAGE_URL"
+
+# Edit with specific editor
+confluence-markdown --action edit --editor "code --wait" "PAGE_URL"
+
+# Edit with YAML tables (easier to edit complex tables)
+confluence-markdown --action edit --table-format yaml "PAGE_URL"
+
+# Select from recently edited pages
+confluence-markdown --action edit-recent --limit 20
 ```
 
-### Search Pages
+### Downloading Pages
 
-Search by text:
 ```bash
-confluence-markdown --action search --query "puppet" --limit 20
+# Download single page
+confluence-markdown --action download -o page.md "PAGE_URL"
+
+# Download page and all children (parallel)
+confluence-markdown --action download --recursive --output-dir ./export "PAGE_URL"
+
+# Download with custom limit
+confluence-markdown --action download --recursive --limit 100 --output-dir ./export "PAGE_URL"
 ```
 
-Search by CQL:
+### Listing Child Pages
+
 ```bash
-confluence-markdown --action search --cql "type=page AND space = TIK"
+# List direct children
+confluence-markdown --action list-children "PAGE_URL"
+
+# List all descendants recursively (uses parallel API calls)
+confluence-markdown --action list-children --recursive "PAGE_URL"
 ```
 
-### Create New Page
+### Creating Pages
 
-Create a new page in a space:
 ```bash
-confluence-markdown \
-  --base-url https://confluence.company.com \
-  --username YOUR_USERNAME \
-  --token YOUR_PAT \
-  --action create \
+# Create new page
+confluence-markdown --action create \
   --space MYSPACE \
   --title "My New Page" \
-  --content "# Welcome\n\nThis is my new page content"
-```
+  --content "# Welcome\n\nPage content here"
 
-Create a page under a parent (for hierarchy):
-```bash
-confluence-markdown \
-  --base-url https://confluence.company.com \
-  --username YOUR_USERNAME \
-  --token YOUR_PAT \
-  --action create \
+# Create child page
+confluence-markdown --action create \
   --space MYSPACE \
   --title "Child Page" \
   --parent-id 12345 \
-  --content "Content for the child page"
+  --content "Content for child page"
+
+# Create task page with Page Properties
+confluence-markdown --action create-task \
+  --parent-id 12345 \
+  --title "New Task" \
+  --category "Development" \
+  --priority "80" \
+  --status "offen" \
+  --content "Task description here"
 ```
 
-### Add Content to Page
+### Adding Content
 
-Append markdown content to an existing page:
 ```bash
-confluence-markdown \
-  --base-url https://confluence.company.com \
-  --username YOUR_USERNAME \
-  --token YOUR_PAT \
-  --action add \
-  --content "## New Section\nThis is new content" \
-  "https://confluence.company.com/pages/viewpage.action?pageId=12345"
-```
+# Append markdown content
+confluence-markdown --action add \
+  --content "## New Section\n\nNew content here" \
+  "PAGE_URL"
 
-Prepend content instead:
-```bash
-confluence-markdown \
-  --base-url https://confluence.company.com \
-  --username YOUR_USERNAME \
-  --token YOUR_PAT \
-  --action add \
-  --content "## Important Update\nThis goes at the top" \
-  --prepend \
-  URL
-```
+# Prepend content
+confluence-markdown --action add --prepend \
+  --content "## Important Notice\n\nThis goes at the top" \
+  "PAGE_URL"
 
-Add HTML content directly:
-```bash
-confluence-markdown \
-  --base-url https://confluence.company.com \
-  --username YOUR_USERNAME \
-  --token YOUR_PAT \
-  --action add \
-  --content "<h2>HTML Section</h2><p>HTML content</p>" \
+# Add HTML directly
+confluence-markdown --action add \
+  --content "<ac:structured-macro ac:name='info'>...</ac:structured-macro>" \
   --content-type html \
-  URL
+  "PAGE_URL"
 ```
 
-### Edit Page Interactively
+### Search
 
-Open page content in your preferred editor, make changes, and upload automatically:
 ```bash
+# Text search
+confluence-markdown --action search --query "kubernetes deployment" --limit 20
+
+# CQL search
+confluence-markdown --action search --cql "space = DEV AND label = important"
+
+# Search in specific space
+confluence-markdown --action search --cql "space = DOCS AND text ~ 'API'"
+```
+
+### Caching
+
+```bash
+# Disable cache for fresh data
+confluence-markdown --no-cache --action read-recent
+
+# Clear all cached data
+confluence-markdown --clear-cache
+```
+
+### Scripting Mode
+
+```bash
+# Quiet mode for scripts (suppress info messages)
+confluence-markdown --quiet --action download -o page.md "PAGE_URL"
+
+# Check exit code
+if confluence-markdown --quiet --action test-auth; then
+  echo "Auth OK"
+fi
+```
+
+## Configuration
+
+### Config File Location
+
+`~/.config/confluence-markdown/config.json`
+
+### Multiple Profiles
+
+```bash
+# Save work profile
 confluence-markdown \
-  --base-url https://confluence.company.com \
-  --username YOUR_USERNAME \
-  --token YOUR_PAT \
-  --action edit \
-  URL
+  --base-url https://work.confluence.com \
+  --username work_user \
+  --token WORK_TOKEN \
+  --save-config --profile work \
+  --action test-auth
 
-# Or with saved config
-confluence-markdown --config --action edit URL
+# Use work profile
+confluence-markdown --profile work --action read-recent
+
+# List profiles
+confluence-markdown --list-profiles
+
+# Delete profile
+confluence-markdown --delete-profile --profile old
 ```
 
-**How it works:**
-1. Downloads current page content as markdown
-2. Opens in your editor (respects `$EDITOR` environment variable)
-3. Detects common editors: VS Code, vim, nano, emacs, etc.
-4. After saving and closing, uploads changes back to Confluence
-5. If you exit without saving, no changes are made
+### Per-Space Configuration
 
-## Supported URL Formats
+Edit `~/.config/confluence-markdown/config.json`:
 
-The tool supports various Confluence URL formats:
-- `/pages/viewpage.action?pageId=123456`
-- `/spaces/SPACE/pages/123456/Page+Title`
-- `/display/SPACE/Page+Title` (if page ID is in the path)
-
-## Command Line Options
-
-```
-positional arguments:
-  url                   Confluence page URL (optional for test-auth/config ops)
-
-options:
-  -h, --help           Show help message
-  --base-url           Confluence base URL (required unless using --config)
-  --username           Username for authentication
-  --password           Password or API token
-  --token              Personal Access Token (use with username for DC)
-  --output, -o         Output file for markdown (download action)
-  --action             Action: download (default), read, add, edit, create, test-auth,
-                       edit-recent, read-recent, search
-  --content            Content to add (for add/create action)
-  --content-type       Content type: markdown (default) or html
-  --append             Append content (default: True)
-  --prepend            Prepend content instead of append
-  --limit              Number of pages to fetch (recent/read-recent/search)
-  --query              Search query text (search action)
-  --cql                CQL query (search action)
-  --raw                Print raw markdown instead of Rich rendering
-  --width              Override render width for Rich output
-  --verbose            Enable debug output
-
-create options:
-  --space              Space key for new page (required for create)
-  --title              Title for new page (required for create)
-  --parent-id          Parent page ID for hierarchy (optional)
-
-config options:
-  --init-config        Initialize empty config file structure
-  --save-config        Save credentials to config file
-  --config             Load credentials from config file
-  --profile            Config profile name (default: "default")
-  --list-profiles      List all saved config profiles
-  --delete-profile     Delete a config profile
+```json
+{
+  "default": {
+    "base_url": "https://confluence.company.com",
+    "username": "user",
+    "token": "...",
+    "editor": "vim",
+    "table_format": "markdown",
+    "spaces": {
+      "DOCS": {
+        "editor": "code --wait",
+        "table_format": "yaml"
+      },
+      "WIKI": {
+        "editor": "nano"
+      }
+    }
+  }
+}
 ```
 
-## Getting Credentials
+Now pages in the DOCS space will open in VS Code with YAML tables.
 
-### Personal Access Token (Confluence DC 7.9+)
-1. Log into Confluence
-2. Click profile picture � **Personal Access Tokens**
-3. Create token with appropriate permissions
-4. Save the token securely
+## Command Line Reference
 
-### API Token (older versions)
-1. Log into Confluence
-2. Go to Account Settings � Security
-3. Create API token
-4. Use with your username
+```
+Actions:
+  read-recent     Browse recently viewed pages (default)
+  edit-recent     Edit recently edited pages
+  read            Read specific page
+  edit            Edit specific page
+  download        Download page as markdown
+  add             Add content to page
+  create          Create new page
+  create-task     Create task page with Page Properties
+  search          Search pages
+  list-children   List child pages
+  test-auth       Test authentication
 
-## Troubleshooting
+Options:
+  --base-url URL        Confluence base URL
+  --username USER       Username for auth
+  --token TOKEN         Personal Access Token
+  --password PASS       Password (alternative to token)
+  --profile NAME        Config profile (default: "default")
+  --config              Load from config file explicitly
 
-Enable debug output with `--verbose` to see request and response details.
+  --action ACTION       Action to perform
+  --output, -o FILE     Output file for download
+  --content TEXT        Content for add/create
+  --content-type TYPE   markdown (default) or html
 
-If you encounter authentication errors:
-1. First run with `--action test-auth` to verify credentials
-2. Ensure you're using the correct authentication method for your Confluence version
-3. For Data Center with PAT, always include both `--username` and `--token`
-4. Check that your account has permission to access the requested page
+  --space KEY           Space key for create
+  --title TEXT          Page title for create
+  --parent-id ID        Parent page ID
+
+  --category TEXT       Task category (create-task)
+  --priority TEXT       Task priority (create-task)
+  --status TEXT         Task status (create-task)
+
+  --query TEXT          Search query text
+  --cql TEXT            CQL query for search
+  --limit N             Number of results (default: 10)
+
+  --recursive, -r       Process children recursively
+  --output-dir DIR      Output directory for batch downloads
+
+  --editor CMD          Editor command (e.g., "vim", "code --wait")
+  --table-format FMT    Table format: markdown or yaml
+  --raw                 Output raw markdown
+  --width N             Override terminal width
+
+  --no-fzf              Use InquirerPy instead of fzf
+  --no-cache            Disable response caching
+  --clear-cache         Clear cache and exit
+
+  --quiet, -q           Suppress info messages
+  --verbose             Enable debug output
+  --completion SHELL    Output completion script (bash/zsh)
+
+Config Management:
+  --init-config         Create example config file
+  --save-config         Save credentials to config
+  --list-profiles       List all profiles
+  --delete-profile      Delete profile specified by --profile
+```
 
 ## Requirements
 
-- Python 3.7+
+- Python 3.10+
+- httpx (async HTTP)
 - requests
 - markdownify
 - beautifulsoup4
 - InquirerPy
 - rich
+- tenacity
+- argcomplete
+- pyyaml
+- markdown
 
-## Legacy Files
+Optional:
+- fzf (for fuzzy page selection)
 
-Older docs and shell scripts have been moved to `legacy/docs` and `legacy/scripts`.
+## Troubleshooting
+
+### Authentication Errors
+
+```bash
+# Test credentials
+confluence-markdown --verbose --action test-auth
+
+# For Data Center, always use username + token
+confluence-markdown --username USER --token PAT --action test-auth
+```
+
+### Rate Limiting
+
+The tool automatically handles rate limits with exponential backoff. If you hit limits frequently:
+
+```bash
+# Add delays between batch operations
+confluence-markdown --action download --recursive --limit 50 "PAGE_URL"
+```
+
+### Cache Issues
+
+```bash
+# Clear cache if data seems stale
+confluence-markdown --clear-cache
+
+# Disable cache for single command
+confluence-markdown --no-cache --action read "PAGE_URL"
+```
+
+### Complex Tables
+
+Tables with merged cells (colspan/rowspan) are preserved as HTML with a comment marker:
+
+```html
+<!-- Complex table preserved as HTML (has merged cells) -->
+<table>...</table>
+```
 
 ## License
 
