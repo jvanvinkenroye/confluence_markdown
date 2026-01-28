@@ -13,6 +13,8 @@ dependencies = [
     "inquirerpy>=0.3.4",
     "rich>=14.2.0",
     "pyyaml>=6.0.3",
+    "tenacity>=9.0.0",
+    "argcomplete>=3.6.3",
 ]
 
 [project.scripts]

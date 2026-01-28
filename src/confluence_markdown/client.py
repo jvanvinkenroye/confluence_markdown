@@ -3,6 +3,7 @@
 import base64
 import io
 import json
+import logging
 import os
 import re
 import shlex
@@ -18,6 +19,15 @@ import yaml
 from bs4 import BeautifulSoup
 from bs4.element import Tag
 from markdownify import markdownify
+from tenacity import (
+    retry,
+    retry_if_exception_type,
+    stop_after_attempt,
+    wait_exponential,
+    before_sleep_log,
+)
+
+logger = logging.getLogger(__name__)
 
 
 class ConfluenceClient:
@@ -77,12 +87,46 @@ class ConfluenceClient:
             {"Content-Type": "application/json", "Accept": "application/json"}
         )
 
+    @retry(
+        retry=retry_if_exception_type((requests.ConnectionError, requests.Timeout)),
+        stop=stop_after_attempt(3),
+        wait=wait_exponential(multiplier=1, min=1, max=10),
+        before_sleep=before_sleep_log(logger, logging.WARNING),
+        reraise=True,
+    )
+    def _request(
+        self,
+        method: str,
+        url: str,
+        **kwargs,
+    ) -> requests.Response:
+        """
+        Make an HTTP request with automatic retry on transient errors.
+
+        Args:
+            method: HTTP method (GET, POST, PUT, DELETE)
+            url: Full URL to request
+            **kwargs: Additional arguments passed to requests
+
+        Returns:
+            Response object
+        """
+        self._debug(f"{method} {url}")
+        response = self.session.request(method, url, **kwargs)
+
+        # Retry on 5xx server errors
+        if response.status_code >= 500:
+            self._debug(f"Server error {response.status_code}, will retry")
+            response.raise_for_status()
+
+        return response
+
     def test_authentication(self) -> dict:
         """Test authentication by getting current user info."""
         url = f"{self.api_base}/user/current"
         self._debug(f"Testing authentication at: {url}")
 
-        response = self.session.get(url)
+        response = self._request("GET", url)
         self._debug(f"Auth test status: {response.status_code}")
         self._debug(f"Auth test response: {response.text[:500]}")
 
@@ -127,7 +171,7 @@ class ConfluenceClient:
             f"Using headers: {self._redact_headers(dict(self.session.headers))}"
         )
 
-        response = self.session.get(url, params=params)
+        response = self._request("GET", url, params=params)
 
         self._debug(f"Response status code: {response.status_code}")
         self._debug(f"Response headers: {dict(response.headers)}")
@@ -472,7 +516,7 @@ class ConfluenceClient:
         }
 
         url = f"{self.api_base}/content/{page_data['id']}"
-        response = self.session.put(url, json=update_data)
+        response = self._request("PUT", url, json=update_data)
         if response.status_code == 409:
             raise RuntimeError(
                 "Confluence rejected the update due to a version conflict. "
@@ -524,7 +568,7 @@ class ConfluenceClient:
         url = f"{self.api_base}/content"
         self._debug(f"Creating page in space {space_key} with title: {title}")
 
-        response = self.session.post(url, json=page_data)
+        response = self._request("POST", url, json=page_data)
 
         if response.status_code not in (200, 201):
             print(f"ERROR: HTTP {response.status_code}")
@@ -643,11 +687,11 @@ class ConfluenceClient:
         url = f"{self.api_base}/content"
         self._debug(f"Creating task page under parent {parent_id} with title: {title}")
 
-        response = self.session.post(url, json=page_data)
+        response = self._request("POST", url, json=page_data)
 
         if response.status_code not in (200, 201):
-            print(f"ERROR: HTTP {response.status_code}")
-            print(f"ERROR: Full response: {response.text}")
+            logger.error("HTTP %s", response.status_code)
+            logger.error("Full response: %s", response.text)
 
         response.raise_for_status()
 
@@ -1445,7 +1489,7 @@ class ConfluenceClient:
             }
 
             url = f"{self.api_base}/content/{page_data['id']}"
-            response = self.session.put(url, json=update_data)
+            response = self._request("PUT", url, json=update_data)
             self._debug(f"Update response status: {response.status_code}")
             if response.status_code != 200:
                 self._debug(f"Update response body: {response.text[:2000]}")

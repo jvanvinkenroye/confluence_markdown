@@ -8,6 +8,8 @@ import shutil
 import sys
 from typing import Any
 
+import argcomplete
+
 from .client import ConfluenceClient
 from .config import ConfigManager
 from .exceptions import AuthenticationError, ConfigurationError, ConfluenceError
@@ -16,10 +18,21 @@ from .exceptions import AuthenticationError, ConfigurationError, ConfluenceError
 logger = logging.getLogger(__name__)
 
 
-def setup_logging(verbose: bool = False) -> None:
+def profile_completer(**kwargs) -> list[str]:
+    """Completer for --profile argument."""
+    config_manager = ConfigManager()
+    return config_manager.list_profiles()
+
+
+def setup_logging(verbose: bool = False, quiet: bool = False) -> None:
     """Configure logging for the CLI."""
-    level = logging.DEBUG if verbose else logging.INFO
-    format_str = "%(levelname)s: %(message)s" if not verbose else "%(asctime)s - %(name)s - %(levelname)s - %(message)s"
+    if quiet:
+        level = logging.WARNING
+    elif verbose:
+        level = logging.DEBUG
+    else:
+        level = logging.INFO
+    format_str = "%(asctime)s - %(name)s - %(levelname)s - %(message)s" if verbose else "%(levelname)s: %(message)s"
     logging.basicConfig(level=level, format=format_str)
 
 
@@ -68,6 +81,11 @@ def create_parser() -> argparse.ArgumentParser:
         "--verbose",
         action="store_true",
         help="Enable verbose debug output",
+    )
+    parser.add_argument(
+        "--quiet", "-q",
+        action="store_true",
+        help="Suppress informational output (for scripting)",
     )
     parser.add_argument(
         "--editor",
@@ -134,9 +152,10 @@ def create_parser() -> argparse.ArgumentParser:
     parser.add_argument(
         "--config", action="store_true", help="Load credentials from config file"
     )
-    parser.add_argument(
+    profile_arg = parser.add_argument(
         "--profile", default="default", help='Config profile name (default: "default")'
     )
+    profile_arg.completer = profile_completer  # type: ignore[attr-defined]
     parser.add_argument(
         "--list-profiles", action="store_true", help="List all saved config profiles"
     )
@@ -147,6 +166,11 @@ def create_parser() -> argparse.ArgumentParser:
         "--init-config",
         action="store_true",
         help="Initialize empty config file structure",
+    )
+    parser.add_argument(
+        "--completion",
+        choices=["bash", "zsh"],
+        help="Output shell completion script",
     )
 
     return parser
@@ -577,10 +601,24 @@ ACTION_HANDLERS = {
 def main():
     """Main CLI function."""
     parser = create_parser()
+    argcomplete.autocomplete(parser)
     args = parser.parse_args()
 
+    # Output completion script if requested
+    if args.completion:
+        print(f"""# Add this to your ~/.{args.completion}rc:
+# eval "$(confluence-markdown --completion {args.completion})"
+
+# Or for {args.completion}, add this to enable completion:""")
+        if args.completion == "bash":
+            print('eval "$(register-python-argcomplete confluence-markdown)"')
+        else:  # zsh
+            print("autoload -U bashcompinit && bashcompinit")
+            print('eval "$(register-python-argcomplete confluence-markdown)"')
+        sys.exit(0)
+
     # Setup logging
-    setup_logging(args.verbose)
+    setup_logging(args.verbose, args.quiet)
 
     # Initialize config manager
     config_manager = ConfigManager()
