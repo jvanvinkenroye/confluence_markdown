@@ -4,6 +4,7 @@ import getpass
 import json
 import logging
 import os
+import re
 import shutil
 import sys
 from typing import Any
@@ -88,6 +89,11 @@ def create_parser() -> argparse.ArgumentParser:
         help="Suppress informational output (for scripting)",
     )
     parser.add_argument(
+        "--no-fzf",
+        action="store_true",
+        help="Disable fzf for page selection (use InquirerPy instead)",
+    )
+    parser.add_argument(
         "--editor",
         help="Editor to use for edit actions (e.g., vim, nano, code)",
     )
@@ -144,6 +150,17 @@ def create_parser() -> argparse.ArgumentParser:
     )
     parser.add_argument("--query", help="Search query text")
     parser.add_argument("--cql", help="Confluence CQL for search action")
+
+    # Batch options
+    parser.add_argument(
+        "--recursive", "-r",
+        action="store_true",
+        help="Process child pages recursively (for list-children, download)",
+    )
+    parser.add_argument(
+        "--output-dir",
+        help="Output directory for batch downloads",
+    )
 
     # Config file options
     parser.add_argument(
@@ -303,6 +320,67 @@ def create_client(args: argparse.Namespace) -> ConfluenceClient:
     )
 
 
+def is_fzf_available() -> bool:
+    """Check if fzf is available in PATH."""
+    return shutil.which("fzf") is not None
+
+
+def select_with_fzf(choices: list[dict], prompt: str = "Select") -> str | None:
+    """Use fzf for selection. Returns selected value or None if cancelled."""
+    import subprocess
+
+    # Build input for fzf: "label\tvalue" format
+    fzf_input = "\n".join(f"{c['name']}\t{c['value']}" for c in choices)
+
+    try:
+        result = subprocess.run(
+            ["fzf", "--prompt", f"{prompt}> ", "--with-nth=1", "--delimiter=\t",
+             "--height=40%", "--reverse", "--border"],
+            input=fzf_input,
+            capture_output=True,
+            text=True,
+        )
+        if result.returncode == 0 and result.stdout.strip():
+            # Extract value from "label\tvalue" output
+            parts = result.stdout.strip().split("\t")
+            return parts[-1] if len(parts) > 1 else parts[0]
+        return None
+    except Exception as e:
+        logger.debug("fzf error: %s", e)
+        return None
+
+
+def select_page(choices: list[dict], prompt: str = "Select a page", use_fzf: bool = True) -> str | None:
+    """
+    Interactive page selection using fzf (if available) or InquirerPy.
+
+    Args:
+        choices: List of dicts with 'name' and 'value' keys
+        prompt: Prompt message
+        use_fzf: Whether to try fzf first (default: True)
+
+    Returns:
+        Selected value or None if cancelled
+    """
+    if use_fzf and is_fzf_available():
+        result = select_with_fzf(choices, prompt)
+        if result is not None:
+            return result
+        # User cancelled fzf (Ctrl+C or Esc)
+        return None
+
+    # Fall back to InquirerPy
+    try:
+        from InquirerPy import inquirer
+        return inquirer.select(message=prompt, choices=choices).execute()
+    except ImportError:
+        logger.error(
+            "Neither fzf nor InquirerPy available for interactive selection. "
+            "Install fzf or run `uv add InquirerPy`."
+        )
+        sys.exit(1)
+
+
 def require_inquirer():
     """Import and return InquirerPy, or exit with error."""
     try:
@@ -346,13 +424,15 @@ def handle_edit_recent(client: ConfluenceClient, args: argparse.Namespace) -> No
         logger.info("No recent pages found.")
         return
 
-    inquirer = require_inquirer()
     choices = [
         {"name": f"{p['title']} - {p['space']} - {p['last_modified']}", "value": p["url"]}
         for p in pages
     ]
 
-    selected_url = inquirer.select(message="Select a page", choices=choices).execute()
+    selected_url = select_page(choices, "Select a page to edit", use_fzf=not args.no_fzf)
+    if not selected_url:
+        logger.info("Selection cancelled.")
+        return
     print(f"Page URL: {selected_url}")
     result = client.edit_page_with_editor(selected_url)
     if result is None:
@@ -366,7 +446,6 @@ def handle_read_recent(client: ConfluenceClient, args: argparse.Namespace) -> No
         logger.info("No recently viewed pages found.")
         return
 
-    inquirer = require_inquirer()
     Console, Markdown = get_rich_modules()
 
     choices = [
@@ -376,11 +455,9 @@ def handle_read_recent(client: ConfluenceClient, args: argparse.Namespace) -> No
     choices.append({"name": "[q] Quit", "value": "__QUIT__"})
 
     while True:
-        selected_url = inquirer.select(
-            message="Select a page (q to quit)", choices=choices
-        ).execute()
+        selected_url = select_page(choices, "Select a page (q to quit)", use_fzf=not args.no_fzf)
 
-        if selected_url == "__QUIT__":
+        if selected_url is None or selected_url == "__QUIT__":
             print("Bye!")
             break
 
@@ -439,7 +516,6 @@ def handle_search(client: ConfluenceClient, args: argparse.Namespace) -> None:
         logger.info("No search results found.")
         return
 
-    inquirer = require_inquirer()
     Console, Markdown = get_rich_modules()
 
     choices = [
@@ -447,11 +523,23 @@ def handle_search(client: ConfluenceClient, args: argparse.Namespace) -> None:
         for p in pages
     ]
 
-    selected_url = inquirer.select(message="Select a page", choices=choices).execute()
+    selected_url = select_page(choices, "Select a page", use_fzf=not args.no_fzf)
+    if not selected_url:
+        logger.info("Selection cancelled.")
+        return
     print(f"Page URL: {selected_url}")
 
     page_info = client.read_page_content(selected_url)
     display_page_content(client, args, page_info, page_info["markdown_content"], Console, Markdown, show_actions=False)
+
+
+def sanitize_filename(title: str) -> str:
+    """Convert page title to safe filename."""
+    # Replace problematic characters with underscores
+    safe = re.sub(r'[<>:"/\\|?*]', '_', title)
+    # Replace multiple spaces/underscores with single underscore
+    safe = re.sub(r'[\s_]+', '_', safe)
+    return safe.strip('_')[:100]  # Limit length
 
 
 def handle_download(client: ConfluenceClient, args: argparse.Namespace) -> None:
@@ -459,10 +547,30 @@ def handle_download(client: ConfluenceClient, args: argparse.Namespace) -> None:
     if not args.url:
         raise ConfigurationError("URL is required for download action")
 
-    markdown_content = client.download_as_markdown(args.url, args.output)
-    if not args.output:
-        print(markdown_content)
-    print(f"Page URL: {args.url}")
+    if args.recursive:
+        # Download page and all children
+        output_dir = args.output_dir or "confluence_export"
+        os.makedirs(output_dir, exist_ok=True)
+
+        # Get the main page first
+        page_info = client.read_page_content(args.url)
+        main_file = os.path.join(output_dir, f"{sanitize_filename(page_info['title'])}.md")
+        markdown_content = client.download_as_markdown(args.url, main_file)
+        logger.info("Downloaded: %s", page_info['title'])
+
+        # Get all children recursively
+        children = list_children_recursive(client, args.url, args.limit)
+        for child in children:
+            child_file = os.path.join(output_dir, f"{sanitize_filename(child['title'])}.md")
+            client.download_as_markdown(child["url"], child_file)
+            logger.info("Downloaded: %s", child['title'])
+
+        print(f"Downloaded {len(children) + 1} pages to {output_dir}/")
+    else:
+        markdown_content = client.download_as_markdown(args.url, args.output)
+        if not args.output:
+            print(markdown_content)
+        print(f"Page URL: {args.url}")
 
 
 def handle_read(client: ConfluenceClient, args: argparse.Namespace) -> None:
@@ -564,21 +672,43 @@ def handle_create_task(client: ConfluenceClient, args: argparse.Namespace) -> No
         print(f"Page URL: {client.base_url}/pages/viewpage.action?pageId={page_id}")
 
 
+def list_children_recursive(
+    client: ConfluenceClient, page_url: str, limit: int, indent: int = 0
+) -> list[dict]:
+    """Recursively list all children of a page."""
+    all_children = []
+    children = client.list_children(page_url, limit)
+
+    for child in children:
+        child["indent"] = indent
+        all_children.append(child)
+        # Recursively get children of this child
+        grandchildren = list_children_recursive(client, child["url"], limit, indent + 1)
+        all_children.extend(grandchildren)
+
+    return all_children
+
+
 def handle_list_children(client: ConfluenceClient, args: argparse.Namespace) -> None:
     """Handle list-children action."""
     if not args.url:
         raise ConfigurationError("URL is required for list-children action")
 
-    children = client.list_children(args.url, args.limit)
+    if args.recursive:
+        children = list_children_recursive(client, args.url, args.limit)
+    else:
+        children = client.list_children(args.url, args.limit)
+
     if not children:
         logger.info("No child pages found.")
         return
 
     print(f"Found {len(children)} child pages:\n")
     for child in children:
-        print(f"  - {child['title']}")
-        print(f"    ID: {child['id']}")
-        print(f"    URL: {child['url']}")
+        indent = "  " * child.get("indent", 0)
+        print(f"{indent}  - {child['title']}")
+        print(f"{indent}    ID: {child['id']}")
+        print(f"{indent}    URL: {child['url']}")
         print()
 
 

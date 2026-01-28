@@ -87,6 +87,34 @@ class ConfluenceClient:
             {"Content-Type": "application/json", "Accept": "application/json"}
         )
 
+    def _handle_rate_limit(self, response: requests.Response) -> None:
+        """Handle rate limiting based on response headers."""
+        import time
+
+        # Check for rate limit headers (common patterns)
+        remaining = response.headers.get("X-RateLimit-Remaining")
+        retry_after = response.headers.get("Retry-After")
+
+        # Warn when approaching limit
+        if remaining is not None:
+            try:
+                remaining_int = int(remaining)
+                if remaining_int <= 5:
+                    logger.warning("Rate limit nearly exhausted: %s requests remaining", remaining)
+            except ValueError:
+                pass
+
+        # Handle 429 Too Many Requests
+        if response.status_code == 429:
+            wait_time = 60  # Default wait time
+            if retry_after:
+                try:
+                    wait_time = int(retry_after)
+                except ValueError:
+                    pass
+            logger.warning("Rate limited. Waiting %s seconds...", wait_time)
+            time.sleep(wait_time)
+
     @retry(
         retry=retry_if_exception_type((requests.ConnectionError, requests.Timeout)),
         stop=stop_after_attempt(3),
@@ -113,6 +141,14 @@ class ConfluenceClient:
         """
         self._debug(f"{method} {url}")
         response = self.session.request(method, url, **kwargs)
+
+        # Handle rate limiting
+        self._handle_rate_limit(response)
+
+        # Retry on rate limit
+        if response.status_code == 429:
+            # After sleeping in _handle_rate_limit, retry the request
+            response = self.session.request(method, url, **kwargs)
 
         # Retry on 5xx server errors
         if response.status_code >= 500:
