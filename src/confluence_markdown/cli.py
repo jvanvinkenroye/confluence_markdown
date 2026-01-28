@@ -49,6 +49,7 @@ def create_parser() -> argparse.ArgumentParser:
             "edit-recent",
             "read-recent",
             "search",
+            "list-children",
         ],
         default="read-recent",
         help="Action to perform",
@@ -539,6 +540,24 @@ def handle_create_task(client: ConfluenceClient, args: argparse.Namespace) -> No
         print(f"Page URL: {client.base_url}/pages/viewpage.action?pageId={page_id}")
 
 
+def handle_list_children(client: ConfluenceClient, args: argparse.Namespace) -> None:
+    """Handle list-children action."""
+    if not args.url:
+        raise ConfigurationError("URL is required for list-children action")
+
+    children = client.list_children(args.url, args.limit)
+    if not children:
+        logger.info("No child pages found.")
+        return
+
+    print(f"Found {len(children)} child pages:\n")
+    for child in children:
+        print(f"  - {child['title']}")
+        print(f"    ID: {child['id']}")
+        print(f"    URL: {child['url']}")
+        print()
+
+
 # Action handlers mapping
 ACTION_HANDLERS = {
     "test-auth": handle_test_auth,
@@ -551,6 +570,7 @@ ACTION_HANDLERS = {
     "edit": handle_edit,
     "create": handle_create,
     "create-task": handle_create_task,
+    "list-children": handle_list_children,
 }
 
 

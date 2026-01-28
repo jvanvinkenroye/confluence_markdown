@@ -310,6 +310,53 @@ class ConfluenceClient:
 
         return pages
 
+    def list_children(self, page_url: str, limit: int = 50) -> list:
+        """
+        List child pages of a given page.
+
+        Args:
+            page_url: URL of the parent page
+            limit: Maximum number of children to return
+
+        Returns:
+            List of child page dicts with id, title, space, last_modified, url
+        """
+        page_data = self.get_page_by_url(page_url)
+        page_id = page_data["id"]
+
+        url = f"{self.api_base}/content/{page_id}/child/page"
+        self._debug(f"Fetching children from: {url}")
+
+        params = {
+            "limit": limit,
+            "expand": "space,version",
+        }
+        response = self.session.get(url, params=params)
+        if response.status_code != 200:
+            self._debug(f"ERROR: HTTP {response.status_code}")
+            self._debug(f"ERROR: Full response: {response.text}")
+            response.raise_for_status()
+
+        data = response.json()
+        pages = []
+        for content in data.get("results", []):
+            child_id = content.get("id")
+            if not child_id:
+                continue
+            space = content.get("space", {})
+            version = content.get("version", {})
+            pages.append(
+                {
+                    "id": child_id,
+                    "title": content.get("title", "(untitled)"),
+                    "space": space.get("key", "UNKNOWN"),
+                    "last_modified": version.get("when", "unknown"),
+                    "url": f"{self.base_url}/pages/viewpage.action?pageId={child_id}",
+                }
+            )
+
+        return pages
+
     def download_as_markdown(
         self, page_url: str, output_file: Optional[str] = None
     ) -> str:
@@ -487,7 +534,7 @@ class ConfluenceClient:
 
         created_page = response.json()
         page_id = created_page["id"]
-        print(f"✅ Page created successfully!")
+        print("✅ Page created successfully!")
         print(f"   Title: {title}")
         print(f"   Space: {space_key}")
         print(f"   Page ID: {page_id}")
@@ -1411,7 +1458,7 @@ class ConfluenceClient:
                 )
             response.raise_for_status()
 
-            print(f"✅ Page updated successfully!")
+            print("✅ Page updated successfully!")
             print(f"   New version: {update_data['version']['number']}")
 
             return response.json()
