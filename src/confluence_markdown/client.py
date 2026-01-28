@@ -495,6 +495,117 @@ class ConfluenceClient:
 
         return created_page
 
+    def create_task_page(
+        self,
+        parent_id: str,
+        title: str,
+        category: str = "",
+        priority: str = "",
+        status: str = "offen",
+        description: str = "",
+        tasks: Optional[List[str]] = None,
+    ) -> dict:
+        """
+        Create a new task page with page-properties macro.
+
+        Args:
+            parent_id: Parent page ID
+            title: Page title
+            category: Task category (e.g., 'Tools', 'EvaSys')
+            priority: Priority value (e.g., '80', '50')
+            status: Status (default: 'offen')
+            description: Task description (markdown)
+            tasks: List of task items
+
+        Returns:
+            Created page data
+        """
+        # Build the page-properties table as HTML with the details macro
+        properties_html = f'''<ac:structured-macro ac:name="details" ac:schema-version="1">
+<ac:rich-text-body>
+<table>
+<tbody>
+<tr>
+<th>Priorität</th>
+<th>Kategorie</th>
+<th>Status</th>
+</tr>
+<tr>
+<td>{priority}</td>
+<td>{category}</td>
+<td>{status}</td>
+</tr>
+</tbody>
+</table>
+</ac:rich-text-body>
+</ac:structured-macro>'''
+
+        # Convert description from markdown to HTML
+        if description:
+            description_html = self._markdown_to_html(description)
+        else:
+            description_html = "<p></p>"
+
+        # Build task list HTML
+        tasks_html = ""
+        if tasks:
+            task_items = ""
+            for i, task in enumerate(tasks, 1):
+                task_items += f'''<ac:task>
+<ac:task-id>{i}</ac:task-id>
+<ac:task-status>incomplete</ac:task-status>
+<ac:task-body>{task}</ac:task-body>
+</ac:task>
+'''
+            tasks_html = f"<ac:task-list>{task_items}</ac:task-list>"
+        else:
+            # Empty task list with placeholder
+            tasks_html = '''<ac:task-list>
+<ac:task>
+<ac:task-id>1</ac:task-id>
+<ac:task-status>incomplete</ac:task-status>
+<ac:task-body></ac:task-body>
+</ac:task>
+</ac:task-list>'''
+
+        # Combine into full page content
+        html_content = f'''{properties_html}
+
+<h2>Beschreibung</h2>
+{description_html}
+
+<h2>Nächste Schritte</h2>
+{tasks_html}
+'''
+
+        # Get space key from parent page
+        parent_page = self.session.get(
+            f"{self.api_base}/content/{parent_id}?expand=space"
+        ).json()
+        space_key = parent_page["space"]["key"]
+
+        # Build page data
+        page_data = {
+            "type": "page",
+            "title": title,
+            "space": {"key": space_key},
+            "ancestors": [{"id": parent_id}],
+            "body": {"storage": {"value": html_content, "representation": "storage"}},
+        }
+
+        url = f"{self.api_base}/content"
+        self._debug(f"Creating task page under parent {parent_id} with title: {title}")
+
+        response = self.session.post(url, json=page_data)
+
+        if response.status_code not in (200, 201):
+            print(f"ERROR: HTTP {response.status_code}")
+            print(f"ERROR: Full response: {response.text}")
+
+        response.raise_for_status()
+
+        return response.json()
+
     def _extract_page_id_from_url(self, page_url: str) -> Optional[str]:
         """Extract page ID from Confluence URL."""
         if not page_url:

@@ -28,3 +28,11 @@ test-*.md
 
 # Claude Code
 .claude/
+
+# One-off scripts with credentials
+add_*.py
+create_*.py
+setup_*.py
+fix_*.py
+update_*.py
+convert_*.py

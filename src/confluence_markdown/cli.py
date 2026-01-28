@@ -1,15 +1,30 @@
 """CLI entrypoint and argument handling."""
 import argparse
 import getpass
+import json
+import logging
+import os
 import shutil
 import sys
+from typing import Any
 
 from .client import ConfluenceClient
 from .config import ConfigManager
+from .exceptions import AuthenticationError, ConfigurationError, ConfluenceError
+
+# Configure logging
+logger = logging.getLogger(__name__)
 
 
-def main():
-    """Main CLI function."""
+def setup_logging(verbose: bool = False) -> None:
+    """Configure logging for the CLI."""
+    level = logging.DEBUG if verbose else logging.INFO
+    format_str = "%(levelname)s: %(message)s" if not verbose else "%(asctime)s - %(name)s - %(levelname)s - %(message)s"
+    logging.basicConfig(level=level, format=format_str)
+
+
+def create_parser() -> argparse.ArgumentParser:
+    """Create and configure the argument parser."""
     parser = argparse.ArgumentParser(description="Confluence Data Center Markdown Tool")
     parser.add_argument(
         "url",
@@ -29,6 +44,7 @@ def main():
             "add",
             "edit",
             "create",
+            "create-task",
             "test-auth",
             "edit-recent",
             "read-recent",
@@ -89,6 +105,17 @@ def main():
     parser.add_argument("--title", help="Title for new page")
     parser.add_argument("--parent-id", help="Parent page ID for hierarchy")
 
+    # Task page options (for create-task action)
+    parser.add_argument(
+        "--category", help="Category for task page (e.g., Tools, EvaSys)"
+    )
+    parser.add_argument(
+        "--priority", help="Priority for task page (e.g., 80, 50, 0)"
+    )
+    parser.add_argument(
+        "--status", default="offen", help="Status for task page (default: offen)"
+    )
+
     # Recent pages options
     parser.add_argument(
         "--limit",
@@ -121,78 +148,69 @@ def main():
         help="Initialize empty config file structure",
     )
 
-    args = parser.parse_args()
+    return parser
 
-    # Initialize config manager
-    config_manager = ConfigManager()
 
-    # Handle config-only operations
-    if args.init_config:
-        config_manager.ensure_config_dir()
-        if not config_manager.config_file.exists():
-            # Create config with example entries
-            example_config = {
-                "default": {
-                    "base_url": "https://confluence.example.com",
-                    "username": "your-username",
-                    "token": "YOUR_PERSONAL_ACCESS_TOKEN_HERE",
-                },
-                "work": {
-                    "base_url": "https://work.confluence.com",
-                    "username": "work-user",
-                    "token": "WORK_TOKEN_HERE",
-                },
-            }
-            with open(config_manager.config_file, "w") as f:
-                json.dump(example_config, f, indent=2)
-            os.chmod(config_manager.config_file, 0o600)
-            print(
-                f"✅ Created config file with example entries at: {config_manager.config_file}"
-            )
-            print(f"   Edit the file to add your actual credentials")
-            print(f"   Example profiles created: 'default' and 'work'")
-        else:
-            print(f"ℹ️  Config file already exists at: {config_manager.config_file}")
-        sys.exit(0)
+def handle_init_config(config_manager: ConfigManager) -> None:
+    """Initialize config file with example entries."""
+    config_manager.ensure_config_dir()
+    if not config_manager.config_file.exists():
+        example_config = {
+            "default": {
+                "base_url": "https://confluence.example.com",
+                "username": "your-username",
+                "token": "YOUR_PERSONAL_ACCESS_TOKEN_HERE",
+            },
+            "work": {
+                "base_url": "https://work.confluence.com",
+                "username": "work-user",
+                "token": "WORK_TOKEN_HERE",
+            },
+        }
+        with open(config_manager.config_file, "w") as f:
+            json.dump(example_config, f, indent=2)
+        os.chmod(config_manager.config_file, 0o600)
+        logger.info("Created config file at: %s", config_manager.config_file)
+        logger.info("Edit the file to add your actual credentials")
+        logger.info("Example profiles created: 'default' and 'work'")
+    else:
+        logger.info("Config file already exists at: %s", config_manager.config_file)
 
-    if args.list_profiles:
-        profiles = config_manager.list_profiles()
-        if profiles:
-            print("Available profiles:")
-            for profile in profiles:
-                config = config_manager.load_config(profile)
-                print(f"  - {profile} (base_url: {config.get('base_url', 'N/A')})")
-        else:
-            print("No saved profiles found")
-        sys.exit(0)
 
-    if args.delete_profile:
-        config_manager.delete_profile(args.profile)
-        sys.exit(0)
+def handle_list_profiles(config_manager: ConfigManager) -> None:
+    """List all saved config profiles."""
+    profiles = config_manager.list_profiles()
+    if profiles:
+        print("Available profiles:")
+        for profile in profiles:
+            config = config_manager.load_config(profile)
+            print(f"  - {profile} (base_url: {config.get('base_url', 'N/A')})")
+    else:
+        print("No saved profiles found")
 
-    # Load config if requested
+
+def load_credentials(args: argparse.Namespace, config_manager: ConfigManager) -> None:
+    """Load credentials from config or prompt user."""
     if args.config:
         config = config_manager.load_config(args.profile)
         if config:
-            print(f"📋 Loading config from profile: {args.profile}")
+            logger.info("Loading config from profile: %s", args.profile)
             args.base_url = args.base_url or config.get("base_url")
             args.username = args.username or config.get("username")
             args.password = args.password or config.get("password")
             args.token = args.token or config.get("token")
         else:
-            print(f"❌ No config found for profile: {args.profile}")
-            print(f"   Create one with --save-config")
-            sys.exit(1)
+            raise ConfigurationError(f"No config found for profile: {args.profile}")
     else:
         auto_config = config_manager.load_config("default")
         if auto_config:
-            print("📋 Loading config from profile: default")
+            logger.info("Loading config from profile: default")
             args.base_url = args.base_url or auto_config.get("base_url")
             args.username = args.username or auto_config.get("username")
             args.password = args.password or auto_config.get("password")
             args.token = args.token or auto_config.get("token")
 
-    # Prompt for missing parameters if no config was available
+    # Prompt for missing parameters
     if not args.base_url:
         args.base_url = input("Confluence base URL: ").strip() or None
 
@@ -211,302 +229,385 @@ def main():
         else:
             args.password = getpass.getpass("Password: ")
 
-    # Check if base_url is provided (required unless loading from config)
+
+def save_config_if_requested(args: argparse.Namespace, config_manager: ConfigManager) -> None:
+    """Save credentials to config if requested."""
+    if not args.save_config:
+        return
+
+    if args.username and not args.password and not args.token:
+        args.password = getpass.getpass(f"Password for {args.username}: ")
+
+    config_data = {
+        "base_url": args.base_url,
+        "username": args.username,
+    }
+
+    if args.token:
+        config_data["token"] = args.token
+    elif args.password:
+        save_pass = input("Save password in config? (y/N): ").lower() == "y"
+        if save_pass:
+            config_data["password"] = args.password
+
+    config_manager.save_config(config_data, args.profile)
+
+
+def validate_auth(args: argparse.Namespace) -> None:
+    """Validate that authentication credentials are provided."""
     if not args.base_url:
-        print(
-            "Error: --base-url is required (or use --config to load from saved profile)"
+        raise ConfigurationError(
+            "--base-url is required (or use --config to load from saved profile)"
         )
-        sys.exit(1)
-
-    # Save config if requested
-    if args.save_config:
-        # Prompt for password if not provided
-        if args.username and not args.password and not args.token:
-            args.password = getpass.getpass(f"Password for {args.username}: ")
-
-        config_data = {
-            "base_url": args.base_url,
-            "username": args.username,
-        }
-
-        # Save either token or password (not both)
-        if args.token:
-            config_data["token"] = args.token
-        elif args.password:
-            # Optionally prompt to confirm saving password
-            save_pass = input("Save password in config? (y/N): ").lower() == "y"
-            if save_pass:
-                config_data["password"] = args.password
-
-        config_manager.save_config(config_data, args.profile)
-
-    # Validate authentication
     if not args.token and not (args.username and args.password):
-        print("Error: Either --token or --username/--password must be provided")
-        print("       (or use --config to load from saved profile)")
-        sys.exit(1)
-
-    try:
-        # Initialize client
-        client = ConfluenceClient(
-            base_url=args.base_url,
-            username=args.username,
-            password=args.password,
-            token=args.token,
-            verbose=args.verbose,
-            editor=args.editor,
-            table_format=args.table_format,
+        raise AuthenticationError(
+            "Either --token or --username/--password must be provided"
         )
 
-        if args.action == "test-auth":
-            print("Testing authentication...")
-            auth_result = client.test_authentication()
-            if "error" not in auth_result:
-                print(f"✅ Authentication successful!")
-                print(f"   User: {auth_result.get('displayName', 'Unknown')}")
-                print(f"   Username: {auth_result.get('username', 'Unknown')}")
-                print(f"   User Key: {auth_result.get('userKey', 'Unknown')}")
-            else:
-                print(f"❌ Authentication failed: {auth_result['error']}")
-                return
-        elif args.action == "edit-recent":
-            pages = client.list_recent_pages(args.limit)
-            if not pages:
-                print("No recent pages found.")
-                return
-            try:
-                from InquirerPy import inquirer
-            except ImportError:
-                print(
-                    "Error: InquirerPy is required for interactive selection. "
-                    "Install it with `uv add InquirerPy`."
-                )
-                sys.exit(1)
 
-            choices = []
-            for page in pages:
-                label = f"{page['title']} - {page['space']} - {page['last_modified']}"
-                choices.append({"name": label, "value": page["url"]})
+def create_client(args: argparse.Namespace) -> ConfluenceClient:
+    """Create and return a configured ConfluenceClient."""
+    return ConfluenceClient(
+        base_url=args.base_url,
+        username=args.username,
+        password=args.password,
+        token=args.token,
+        verbose=args.verbose,
+        editor=args.editor,
+        table_format=args.table_format,
+    )
 
-            selected_url = inquirer.select(
-                message="Select a page", choices=choices
-            ).execute()
-            print(f"Page URL: {selected_url}")
+
+def require_inquirer():
+    """Import and return InquirerPy, or exit with error."""
+    try:
+        from InquirerPy import inquirer
+        return inquirer
+    except ImportError:
+        logger.error(
+            "InquirerPy is required for interactive selection. "
+            "Install it with `uv add InquirerPy`."
+        )
+        sys.exit(1)
+
+
+def get_rich_modules():
+    """Import and return Rich modules, or None if not available."""
+    try:
+        from rich.console import Console
+        from rich.markdown import Markdown
+        return Console, Markdown
+    except ImportError:
+        return None, None
+
+
+def handle_test_auth(client: ConfluenceClient) -> None:
+    """Test authentication with the Confluence server."""
+    logger.info("Testing authentication...")
+    auth_result = client.test_authentication()
+    if "error" not in auth_result:
+        logger.info("Authentication successful!")
+        print(f"   User: {auth_result.get('displayName', 'Unknown')}")
+        print(f"   Username: {auth_result.get('username', 'Unknown')}")
+        print(f"   User Key: {auth_result.get('userKey', 'Unknown')}")
+    else:
+        raise AuthenticationError(f"Authentication failed: {auth_result['error']}")
+
+
+def handle_edit_recent(client: ConfluenceClient, args: argparse.Namespace) -> None:
+    """Handle edit-recent action."""
+    pages = client.list_recent_pages(args.limit)
+    if not pages:
+        logger.info("No recent pages found.")
+        return
+
+    inquirer = require_inquirer()
+    choices = [
+        {"name": f"{p['title']} - {p['space']} - {p['last_modified']}", "value": p["url"]}
+        for p in pages
+    ]
+
+    selected_url = inquirer.select(message="Select a page", choices=choices).execute()
+    print(f"Page URL: {selected_url}")
+    result = client.edit_page_with_editor(selected_url)
+    if result is None:
+        logger.info("Edit cancelled or no changes made.")
+
+
+def handle_read_recent(client: ConfluenceClient, args: argparse.Namespace) -> None:
+    """Handle read-recent action with interactive loop."""
+    pages = client.list_recently_viewed_pages(args.limit)
+    if not pages:
+        logger.info("No recently viewed pages found.")
+        return
+
+    inquirer = require_inquirer()
+    Console, Markdown = get_rich_modules()
+
+    choices = [
+        {"name": f"{p['title']} - {p['space']} - {p['last_modified']}", "value": p["url"]}
+        for p in pages
+    ]
+    choices.append({"name": "[q] Quit", "value": "__QUIT__"})
+
+    while True:
+        selected_url = inquirer.select(
+            message="Select a page (q to quit)", choices=choices
+        ).execute()
+
+        if selected_url == "__QUIT__":
+            print("Bye!")
+            break
+
+        print(f"Page URL: {selected_url}")
+        page_info = client.read_page_content(selected_url)
+        markdown_content = page_info["markdown_content"]
+
+        action = display_page_content(client, args, page_info, markdown_content, Console, Markdown)
+
+        if action == "e":
             result = client.edit_page_with_editor(selected_url)
             if result is None:
-                print("Edit cancelled or no changes made.")
-        elif args.action == "read-recent":
-            pages = client.list_recently_viewed_pages(args.limit)
-            if not pages:
-                print("No recently viewed pages found.")
-                return
-            try:
-                from InquirerPy import inquirer
-            except ImportError:
-                print(
-                    "Error: InquirerPy is required for interactive selection. "
-                    "Install it with `uv add InquirerPy`."
-                )
-                sys.exit(1)
-            try:
-                from rich.console import Console
-                from rich.markdown import Markdown
-            except ImportError:
-                Console = None
-                Markdown = None
-
-            choices = []
-            for page in pages:
-                label = f"{page['title']} - {page['space']} - {page['last_modified']}"
-                choices.append({"name": label, "value": page["url"]})
-            choices.append({"name": "[q] Quit", "value": "__QUIT__"})
-
-            # Main loop - keep showing selection until user quits
-            while True:
-                selected_url = inquirer.select(
-                    message="Select a page (q to quit)", choices=choices
-                ).execute()
-
-                if selected_url == "__QUIT__":
-                    print("Bye!")
-                    break
-
-                print(f"Page URL: {selected_url}")
-                page_info = client.read_page_content(selected_url)
-                markdown_content = page_info["markdown_content"]
-
-                # Display with pager and get action
-                if args.raw:
-                    output = f"{markdown_content}\n\nPage URL: {page_info['url']}"
-                    action = client._paginate_text(output, show_actions=True)
-                elif Console and Markdown:
-                    render_width = args.width or shutil.get_terminal_size((80, 24)).columns
-                    rendered = client._render_markdown_to_ansi(
-                        markdown_content, render_width
-                    )
-                    action = client._paginate_text(
-                        f"{rendered}\nPage URL: {page_info['url']}", show_actions=True
-                    )
-                else:
-                    output = f"{markdown_content}\n\nPage URL: {page_info['url']}"
-                    action = client._paginate_text(output, show_actions=True)
-
-                # Handle action from pager
-                if action == "e":
-                    result = client.edit_page_with_editor(selected_url)
-                    if result is None:
-                        print("Edit cancelled or no changes made.")
-                    else:
-                        print("Page updated successfully.")
-                elif action == "q":
-                    print("Bye!")
-                    break
-                # 'b', 'done' or any other returns to selection
-        elif args.action == "search":
-            cql = None
-            if args.cql:
-                cql = client._ensure_page_cql(args.cql)
-            elif args.query:
-                cql = client._build_text_search_cql(args.query)
+                logger.info("Edit cancelled or no changes made.")
             else:
-                print("Error: --query or --cql is required for search action")
-                sys.exit(1)
+                logger.info("Page updated successfully.")
+        elif action == "q":
+            print("Bye!")
+            break
 
-            pages = client.search_pages(cql, args.limit)
-            if not pages:
-                print("No search results found.")
-                return
 
-            try:
-                from InquirerPy import inquirer
-            except ImportError:
-                print(
-                    "Error: InquirerPy is required for interactive selection. "
-                    "Install it with `uv add InquirerPy`."
-                )
-                sys.exit(1)
-            try:
-                from rich.console import Console
-                from rich.markdown import Markdown
-            except ImportError:
-                Console = None
-                Markdown = None
+def display_page_content(
+    client: ConfluenceClient,
+    args: argparse.Namespace,
+    page_info: dict[str, Any],
+    markdown_content: str,
+    Console,
+    Markdown,
+    show_actions: bool = True,
+) -> str | None:
+    """Display page content and return user action."""
+    if args.raw:
+        output = f"{markdown_content}\n\nPage URL: {page_info['url']}"
+        return client._paginate_text(output, show_actions=show_actions)
+    elif Console and Markdown:
+        render_width = args.width or shutil.get_terminal_size((80, 24)).columns
+        rendered = client._render_markdown_to_ansi(markdown_content, render_width)
+        return client._paginate_text(
+            f"{rendered}\nPage URL: {page_info['url']}", show_actions=show_actions
+        )
+    else:
+        output = f"{markdown_content}\n\nPage URL: {page_info['url']}"
+        return client._paginate_text(output, show_actions=show_actions)
 
-            choices = []
-            for page in pages:
-                label = f"{page['title']} - {page['space']} - {page['last_modified']}"
-                choices.append({"name": label, "value": page["url"]})
 
-            selected_url = inquirer.select(
-                message="Select a page", choices=choices
-            ).execute()
-            print(f"Page URL: {selected_url}")
-            page_info = client.read_page_content(selected_url)
-            markdown_content = page_info["markdown_content"]
-            if args.raw:
-                output = f"{markdown_content}\n\nPage URL: {page_info['url']}"
-                client._paginate_text(output)
-            elif Console and Markdown:
-                render_width = args.width or shutil.get_terminal_size((80, 24)).columns
-                rendered = client._render_markdown_to_ansi(
-                    markdown_content, render_width
-                )
-                client._paginate_text(f"{rendered}\nPage URL: {page_info['url']}")
+def handle_search(client: ConfluenceClient, args: argparse.Namespace) -> None:
+    """Handle search action."""
+    if args.cql:
+        cql = client._ensure_page_cql(args.cql)
+    elif args.query:
+        cql = client._build_text_search_cql(args.query)
+    else:
+        raise ConfigurationError("--query or --cql is required for search action")
+
+    pages = client.search_pages(cql, args.limit)
+    if not pages:
+        logger.info("No search results found.")
+        return
+
+    inquirer = require_inquirer()
+    Console, Markdown = get_rich_modules()
+
+    choices = [
+        {"name": f"{p['title']} - {p['space']} - {p['last_modified']}", "value": p["url"]}
+        for p in pages
+    ]
+
+    selected_url = inquirer.select(message="Select a page", choices=choices).execute()
+    print(f"Page URL: {selected_url}")
+
+    page_info = client.read_page_content(selected_url)
+    display_page_content(client, args, page_info, page_info["markdown_content"], Console, Markdown, show_actions=False)
+
+
+def handle_download(client: ConfluenceClient, args: argparse.Namespace) -> None:
+    """Handle download action."""
+    if not args.url:
+        raise ConfigurationError("URL is required for download action")
+
+    markdown_content = client.download_as_markdown(args.url, args.output)
+    if not args.output:
+        print(markdown_content)
+    print(f"Page URL: {args.url}")
+
+
+def handle_read(client: ConfluenceClient, args: argparse.Namespace) -> None:
+    """Handle read action."""
+    if not args.url:
+        raise ConfigurationError("URL is required for read action")
+
+    page_info = client.read_page_content(args.url)
+    print(f"Title: {page_info['title']}")
+    print(f"Space: {page_info['space']} ({page_info['space_key']})")
+    print(f"Version: {page_info['version']}")
+    print(f"URL: {page_info['url']}")
+    print("\nMarkdown Content:")
+    print("=" * 50)
+    print(page_info["markdown_content"])
+    print(f"Page URL: {page_info['url']}")
+
+
+def handle_add(client: ConfluenceClient, args: argparse.Namespace) -> None:
+    """Handle add action."""
+    if not args.url:
+        raise ConfigurationError("URL is required for add action")
+    if not args.content:
+        raise ConfigurationError("--content is required for add action")
+
+    result = client.add_content_to_page(
+        args.url,
+        args.content,
+        append=args.append,
+        content_type=args.content_type,
+    )
+    logger.info("Content added successfully. New version: %s", result['version']['number'])
+    page_id = result.get("id")
+    page_url = (
+        f"{client.base_url}/pages/viewpage.action?pageId={page_id}"
+        if page_id
+        else args.url
+    )
+    print(f"Page URL: {page_url}")
+
+
+def handle_edit(client: ConfluenceClient, args: argparse.Namespace) -> None:
+    """Handle edit action."""
+    if not args.url:
+        raise ConfigurationError("URL is required for edit action")
+
+    result = client.edit_page_with_editor(args.url)
+    if result is None:
+        logger.info("Edit cancelled or no changes made.")
+    else:
+        page_id = result.get("id")
+        page_url = (
+            f"{client.base_url}/pages/viewpage.action?pageId={page_id}"
+            if page_id
+            else args.url
+        )
+        print(f"Page URL: {page_url}")
+
+
+def handle_create(client: ConfluenceClient, args: argparse.Namespace) -> None:
+    """Handle create action."""
+    if not args.space:
+        raise ConfigurationError("--space is required for create action")
+    if not args.title:
+        raise ConfigurationError("--title is required for create action")
+    if not args.content:
+        raise ConfigurationError("--content is required for create action")
+
+    result = client.create_page(
+        space_key=args.space,
+        title=args.title,
+        content=args.content,
+        parent_id=args.parent_id,
+        content_type=args.content_type,
+    )
+    page_id = result.get("id")
+    if page_id:
+        print(f"Page URL: {client.base_url}/pages/viewpage.action?pageId={page_id}")
+
+
+def handle_create_task(client: ConfluenceClient, args: argparse.Namespace) -> None:
+    """Handle create-task action."""
+    if not args.parent_id:
+        raise ConfigurationError("--parent-id is required for create-task action")
+    if not args.title:
+        raise ConfigurationError("--title is required for create-task action")
+
+    result = client.create_task_page(
+        parent_id=args.parent_id,
+        title=args.title,
+        category=args.category or "",
+        priority=args.priority or "",
+        status=args.status or "offen",
+        description=args.content or "",
+    )
+    page_id = result.get("id")
+    if page_id:
+        logger.info("Task page created: %s", args.title)
+        print(f"Page URL: {client.base_url}/pages/viewpage.action?pageId={page_id}")
+
+
+# Action handlers mapping
+ACTION_HANDLERS = {
+    "test-auth": handle_test_auth,
+    "edit-recent": handle_edit_recent,
+    "read-recent": handle_read_recent,
+    "search": handle_search,
+    "download": handle_download,
+    "read": handle_read,
+    "add": handle_add,
+    "edit": handle_edit,
+    "create": handle_create,
+    "create-task": handle_create_task,
+}
+
+
+def main():
+    """Main CLI function."""
+    parser = create_parser()
+    args = parser.parse_args()
+
+    # Setup logging
+    setup_logging(args.verbose)
+
+    # Initialize config manager
+    config_manager = ConfigManager()
+
+    try:
+        # Handle config-only operations (exit early)
+        if args.init_config:
+            handle_init_config(config_manager)
+            sys.exit(0)
+
+        if args.list_profiles:
+            handle_list_profiles(config_manager)
+            sys.exit(0)
+
+        if args.delete_profile:
+            config_manager.delete_profile(args.profile)
+            sys.exit(0)
+
+        # Load credentials
+        load_credentials(args, config_manager)
+        save_config_if_requested(args, config_manager)
+        validate_auth(args)
+
+        # Create client and execute action
+        client = create_client(args)
+        handler = ACTION_HANDLERS.get(args.action)
+        if handler:
+            if args.action == "test-auth":
+                handler(client)
             else:
-                output = f"{markdown_content}\n\nPage URL: {page_info['url']}"
-                client._paginate_text(output)
+                handler(client, args)
 
-        elif args.action == "download":
-            if not args.url:
-                print("Error: URL is required for download action")
-                sys.exit(1)
-
-            markdown_content = client.download_as_markdown(args.url, args.output)
-            if not args.output:
-                print(markdown_content)
-            print(f"Page URL: {args.url}")
-
-        elif args.action == "read":
-            if not args.url:
-                print("Error: URL is required for read action")
-                sys.exit(1)
-
-            page_info = client.read_page_content(args.url)
-            print(f"Title: {page_info['title']}")
-            print(f"Space: {page_info['space']} ({page_info['space_key']})")
-            print(f"Version: {page_info['version']}")
-            print(f"URL: {page_info['url']}")
-            print("\nMarkdown Content:")
-            print("=" * 50)
-            print(page_info["markdown_content"])
-            print(f"Page URL: {page_info['url']}")
-
-        elif args.action == "add":
-            if not args.url:
-                print("Error: URL is required for add action")
-                sys.exit(1)
-            if not args.content:
-                print("Error: --content is required for add action")
-                sys.exit(1)
-
-            result = client.add_content_to_page(
-                args.url,
-                args.content,
-                append=args.append,
-                content_type=args.content_type,
-            )
-            print(
-                f"Content added successfully. New version: {result['version']['number']}"
-            )
-            page_id = result.get("id")
-            page_url = (
-                f"{client.base_url}/pages/viewpage.action?pageId={page_id}"
-                if page_id
-                else args.url
-            )
-            print(f"Page URL: {page_url}")
-
-        elif args.action == "edit":
-            if not args.url:
-                print("Error: URL is required for edit action")
-                sys.exit(1)
-
-            result = client.edit_page_with_editor(args.url)
-            if result is None:
-                print("Edit cancelled or no changes made.")
-            else:
-                page_id = result.get("id")
-                page_url = (
-                    f"{client.base_url}/pages/viewpage.action?pageId={page_id}"
-                    if page_id
-                    else args.url
-                )
-                print(f"Page URL: {page_url}")
-
-        elif args.action == "create":
-            if not args.space:
-                print("Error: --space is required for create action")
-                sys.exit(1)
-            if not args.title:
-                print("Error: --title is required for create action")
-                sys.exit(1)
-            if not args.content:
-                print("Error: --content is required for create action")
-                sys.exit(1)
-
-            result = client.create_page(
-                space_key=args.space,
-                title=args.title,
-                content=args.content,
-                parent_id=args.parent_id,
-                content_type=args.content_type,
-            )
-            page_id = result.get("id")
-            if page_id:
-                print(
-                    f"Page URL: {client.base_url}/pages/viewpage.action?pageId={page_id}"
-                )
-
-    except Exception as e:
-        print(f"Error: {e}")
+    except ConfigurationError as e:
+        logger.error("%s", e)
         sys.exit(1)
+    except AuthenticationError as e:
+        logger.error("%s", e)
+        sys.exit(1)
+    except ConfluenceError as e:
+        logger.error("%s", e)
+        sys.exit(1)
+    except Exception as e:
+        logger.error("Unexpected error: %s", e)
+        if args.verbose:
+            logger.exception("Full traceback:")
+        sys.exit(1)
+
+
+if __name__ == "__main__":
+    main()
