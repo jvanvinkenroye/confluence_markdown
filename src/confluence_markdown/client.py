@@ -1,5 +1,6 @@
 """Confluence API client and helpers."""
 
+import asyncio
 import base64
 import io
 import json
@@ -13,6 +14,7 @@ import tempfile
 from typing import Any, Dict, List, Optional, Tuple
 from urllib.parse import urlparse
 
+import httpx
 import markdown
 import requests
 import yaml
@@ -93,6 +95,9 @@ class ConfluenceClient:
         self.session.headers.update(
             {"Content-Type": "application/json", "Accept": "application/json"}
         )
+
+        # Prepare async client auth headers for later use
+        self._async_headers = dict(self.session.headers)
 
     def _handle_rate_limit(self, response: requests.Response) -> None:
         """Handle rate limiting based on response headers."""
@@ -1648,3 +1653,279 @@ class ConfluenceClient:
             return ["notepad"]
         else:
             return ["vi"]  # Should be available on all Unix systems
+
+    # ==================== Async Methods ====================
+
+    async def _async_request(
+        self,
+        client: httpx.AsyncClient,
+        method: str,
+        url: str,
+        **kwargs,
+    ) -> httpx.Response:
+        """
+        Make an async HTTP request with retry on transient errors.
+
+        Args:
+            client: httpx.AsyncClient instance
+            method: HTTP method (GET, POST, PUT, DELETE)
+            url: Full URL to request
+            **kwargs: Additional arguments passed to httpx
+
+        Returns:
+            Response object
+        """
+        self._debug(f"ASYNC {method} {url}")
+        max_retries = 3
+        last_error = None
+
+        for attempt in range(max_retries):
+            try:
+                response = await client.request(method, url, **kwargs)
+
+                # Handle rate limiting
+                if response.status_code == 429:
+                    retry_after = response.headers.get("Retry-After", "60")
+                    wait_time = int(retry_after) if retry_after.isdigit() else 60
+                    logger.warning("Rate limited. Waiting %s seconds...", wait_time)
+                    await asyncio.sleep(wait_time)
+                    continue
+
+                # Retry on 5xx server errors
+                if response.status_code >= 500:
+                    self._debug(f"Server error {response.status_code}, retrying...")
+                    await asyncio.sleep(2 ** attempt)
+                    continue
+
+                return response
+
+            except (httpx.ConnectError, httpx.TimeoutException) as e:
+                last_error = e
+                self._debug(f"Connection error on attempt {attempt + 1}: {e}")
+                await asyncio.sleep(2 ** attempt)
+
+        if last_error:
+            raise last_error
+        raise RuntimeError("Max retries exceeded")
+
+    async def async_get_page_content(self, page_id: str) -> dict:
+        """
+        Get page content by ID asynchronously.
+
+        Args:
+            page_id: Confluence page ID
+
+        Returns:
+            Page data dictionary
+        """
+        url = f"{self.api_base}/content/{page_id}"
+        params = {"expand": "body.storage,space,version,ancestors"}
+
+        async with httpx.AsyncClient(
+            headers=self._async_headers, timeout=30.0
+        ) as client:
+            response = await self._async_request(
+                client, "GET", url, params=params
+            )
+
+            if response.status_code != 200:
+                raise RuntimeError(f"HTTP {response.status_code}: {response.text}")
+
+            return response.json()
+
+    async def async_list_children(self, page_id: str, limit: int = 50) -> list:
+        """
+        List child pages of a given page asynchronously.
+
+        Args:
+            page_id: Parent page ID
+            limit: Maximum number of children to return
+
+        Returns:
+            List of child page dicts
+        """
+        url = f"{self.api_base}/content/{page_id}/child/page"
+        params = {"limit": limit, "expand": "space,version"}
+
+        async with httpx.AsyncClient(
+            headers=self._async_headers, timeout=30.0
+        ) as client:
+            response = await self._async_request(
+                client, "GET", url, params=params
+            )
+
+            if response.status_code != 200:
+                raise RuntimeError(f"HTTP {response.status_code}: {response.text}")
+
+            data = response.json()
+            pages = []
+            for content in data.get("results", []):
+                child_id = content.get("id")
+                if not child_id:
+                    continue
+                space = content.get("space", {})
+                version = content.get("version", {})
+                pages.append(
+                    {
+                        "id": child_id,
+                        "title": content.get("title", "(untitled)"),
+                        "space": space.get("key", "UNKNOWN"),
+                        "last_modified": version.get("when", "unknown"),
+                        "url": f"{self.base_url}/pages/viewpage.action?pageId={child_id}",
+                    }
+                )
+
+            return pages
+
+    async def async_get_pages_batch(self, page_ids: List[str]) -> List[dict]:
+        """
+        Get multiple pages in parallel.
+
+        Args:
+            page_ids: List of page IDs to fetch
+
+        Returns:
+            List of page data dictionaries
+        """
+        async with httpx.AsyncClient(
+            headers=self._async_headers, timeout=30.0
+        ) as client:
+            tasks = []
+            for page_id in page_ids:
+                url = f"{self.api_base}/content/{page_id}"
+                params = {"expand": "body.storage,space,version,ancestors"}
+                tasks.append(
+                    self._async_request(client, "GET", url, params=params)
+                )
+
+            responses = await asyncio.gather(*tasks, return_exceptions=True)
+
+            results = []
+            for response in responses:
+                if isinstance(response, Exception):
+                    logger.error("Failed to fetch page: %s", response)
+                    continue
+                if response.status_code == 200:
+                    results.append(response.json())
+                else:
+                    logger.error("HTTP %s fetching page", response.status_code)
+
+            return results
+
+    async def async_download_pages_batch(
+        self, page_urls: List[str]
+    ) -> List[Tuple[str, str]]:
+        """
+        Download multiple pages as markdown in parallel.
+
+        Args:
+            page_urls: List of page URLs
+
+        Returns:
+            List of tuples (title, markdown_content)
+        """
+        # First, extract page IDs
+        page_ids = []
+        for url in page_urls:
+            page_id = self._extract_page_id_from_url(url)
+            if page_id:
+                page_ids.append(page_id)
+
+        # Fetch pages in parallel
+        pages = await self.async_get_pages_batch(page_ids)
+
+        # Convert to markdown
+        results = []
+        for page_data in pages:
+            html_content = page_data["body"]["storage"]["value"]
+            markdown_content = self._html_to_markdown(html_content)
+
+            safe_title = self._escape_markdown_heading(page_data["title"])
+            metadata = f"""# {safe_title}
+
+**Space:** {page_data["space"]["name"]}
+**Page ID:** {page_data["id"]}
+**Version:** {page_data["version"]["number"]}
+**URL:** {self.base_url}/pages/viewpage.action?pageId={page_data["id"]}
+
+---
+
+"""
+            full_markdown = metadata + markdown_content
+            results.append((page_data["title"], full_markdown))
+
+        return results
+
+    async def async_list_children_recursive(
+        self,
+        page_id: str,
+        max_depth: int = 10,
+        current_depth: int = 0,
+    ) -> List[dict]:
+        """
+        Recursively list all descendant pages in parallel.
+
+        Args:
+            page_id: Root page ID
+            max_depth: Maximum recursion depth
+            current_depth: Current recursion depth (internal)
+
+        Returns:
+            List of all descendant pages with 'depth' field
+        """
+        if current_depth >= max_depth:
+            return []
+
+        children = await self.async_list_children(page_id)
+
+        # Add depth to each child
+        for child in children:
+            child["depth"] = current_depth
+
+        # Recursively get grandchildren in parallel
+        if children:
+            tasks = [
+                self.async_list_children_recursive(
+                    child["id"], max_depth, current_depth + 1
+                )
+                for child in children
+            ]
+            nested_results = await asyncio.gather(*tasks, return_exceptions=True)
+
+            for result in nested_results:
+                if isinstance(result, Exception):
+                    logger.error("Error in recursive listing: %s", result)
+                    continue
+                children.extend(result)
+
+        return children
+
+    def download_pages_parallel(self, page_urls: List[str]) -> List[Tuple[str, str]]:
+        """
+        Synchronous wrapper for parallel page download.
+
+        Args:
+            page_urls: List of page URLs to download
+
+        Returns:
+            List of tuples (title, markdown_content)
+        """
+        return asyncio.run(self.async_download_pages_batch(page_urls))
+
+    def list_children_recursive_parallel(
+        self, page_url: str, max_depth: int = 10
+    ) -> List[dict]:
+        """
+        Synchronous wrapper for recursive child listing.
+
+        Args:
+            page_url: Parent page URL
+            max_depth: Maximum recursion depth
+
+        Returns:
+            List of all descendant pages
+        """
+        page_data = self.get_page_by_url(page_url)
+        return asyncio.run(
+            self.async_list_children_recursive(page_data["id"], max_depth)
+        )

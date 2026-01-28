@@ -598,24 +598,29 @@ def handle_download(client: ConfluenceClient, args: argparse.Namespace) -> None:
         raise ConfigurationError("URL is required for download action")
 
     if args.recursive:
-        # Download page and all children
+        # Download page and all children using parallel async
         output_dir = args.output_dir or "confluence_export"
         os.makedirs(output_dir, exist_ok=True)
 
-        # Get the main page first
-        page_info = client.read_page_content(args.url)
-        main_file = os.path.join(output_dir, f"{sanitize_filename(page_info['title'])}.md")
-        markdown_content = client.download_as_markdown(args.url, main_file)
-        logger.info("Downloaded: %s", page_info['title'])
+        # Get all children URLs recursively
+        children = client.list_children_recursive_parallel(args.url)
 
-        # Get all children recursively
-        children = list_children_recursive(client, args.url, args.limit)
-        for child in children:
-            child_file = os.path.join(output_dir, f"{sanitize_filename(child['title'])}.md")
-            client.download_as_markdown(child["url"], child_file)
-            logger.info("Downloaded: %s", child['title'])
+        # Collect all URLs for parallel download
+        all_urls = [args.url] + [child["url"] for child in children]
 
-        print(f"Downloaded {len(children) + 1} pages to {output_dir}/")
+        logger.info("Downloading %d pages in parallel...", len(all_urls))
+
+        # Use parallel download
+        results = client.download_pages_parallel(all_urls)
+
+        # Save all files
+        for title, markdown_content in results:
+            file_path = os.path.join(output_dir, f"{sanitize_filename(title)}.md")
+            with open(file_path, "w", encoding="utf-8") as f:
+                f.write(markdown_content)
+            logger.info("Downloaded: %s", title)
+
+        print(f"Downloaded {len(results)} pages to {output_dir}/")
     else:
         markdown_content = client.download_as_markdown(args.url, args.output)
         if not args.output:
@@ -745,7 +750,8 @@ def handle_list_children(client: ConfluenceClient, args: argparse.Namespace) -> 
         raise ConfigurationError("URL is required for list-children action")
 
     if args.recursive:
-        children = list_children_recursive(client, args.url, args.limit)
+        # Use parallel async method for faster recursive listing
+        children = client.list_children_recursive_parallel(args.url)
     else:
         children = client.list_children(args.url, args.limit)
 
@@ -755,7 +761,7 @@ def handle_list_children(client: ConfluenceClient, args: argparse.Namespace) -> 
 
     print(f"Found {len(children)} child pages:\n")
     for child in children:
-        indent = "  " * child.get("indent", 0)
+        indent = "  " * child.get("depth", child.get("indent", 0))
         print(f"{indent}  - {child['title']}")
         print(f"{indent}    ID: {child['id']}")
         print(f"{indent}    URL: {child['url']}")
