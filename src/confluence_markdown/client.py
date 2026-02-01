@@ -819,6 +819,15 @@ class ConfluenceClient:
         # Clean up HTML first
         soup = BeautifulSoup(html_content, "html.parser")
 
+        # Remove data-* attributes and other Confluence-specific attributes
+        for tag in soup.find_all(True):
+            attrs_to_remove = [
+                attr for attr in tag.attrs
+                if attr.startswith("data-") or attr in ("class", "style", "id")
+            ]
+            for attr in attrs_to_remove:
+                del tag[attr]
+
         # Convert to markdown
         markdown = markdownify(
             str(soup), heading_style="ATX", bullets="-", strip=["script", "style"]
@@ -1035,6 +1044,18 @@ class ConfluenceClient:
         macro_map: Dict[str, str] = {}
         macro_index = 1
 
+        # Remove data-* attributes and other Confluence-specific attributes FIRST
+        # before any content extraction
+        for tag in soup.find_all(True):
+            if not isinstance(tag, Tag):
+                continue
+            attrs_to_remove = [
+                attr for attr in tag.attrs
+                if attr.startswith("data-") or attr in ("class", "style", "id")
+            ]
+            for attr in attrs_to_remove:
+                del tag[attr]
+
         # Layout tags are containers, not macros - don't preserve them as placeholders
         # Their content should be converted to markdown
         layout_tags = {"ac:layout", "ac:layout-section", "ac:layout-cell"}
@@ -1072,6 +1093,66 @@ class ConfluenceClient:
             tag.replace_with(placeholder)
             macro_index += 1
 
+        # Check for "meeting notes" style tables (macro + lists in cells)
+        # Convert these to a readable section format
+        meeting_table_map: Dict[str, dict] = {}
+        meeting_table_index = 1
+        tables_to_remove = []
+
+        for table in soup.find_all("table"):
+            # Check if table has cells with both placeholders (macros) and lists
+            rows = table.find_all("tr")
+            if len(rows) < 2:
+                continue
+
+            # Check data rows (skip header)
+            has_macro_list_pattern = False
+            for row in rows[1:]:  # Skip header row
+                cells = row.find_all(["td", "th"])
+                row_has_macro = False
+                row_has_list = False
+                for cell in cells:
+                    cell_text = cell.get_text()
+                    if "[[CONFLUENCE-MACRO-" in cell_text:
+                        row_has_macro = True
+                    if cell.find(["ul", "ol"]):
+                        row_has_list = True
+                if row_has_macro and row_has_list:
+                    has_macro_list_pattern = True
+                    break
+
+            if has_macro_list_pattern:
+                # Convert table to section format
+                placeholder = f"[[MEETING-TABLE-{meeting_table_index}]]"
+
+                # Extract header row
+                header_cells = rows[0].find_all(["td", "th"])
+                headers = [c.get_text(strip=True) for c in header_cells]
+
+                # Extract data rows as sections
+                sections = []
+                for row in rows[1:]:
+                    cells = row.find_all(["td", "th"])
+                    row_data = {}
+                    for i, cell in enumerate(cells):
+                        col_name = headers[i] if i < len(headers) else f"col{i}"
+                        # Convert cell content to readable text
+                        row_data[col_name] = self._html_cell_to_text(cell)
+                    sections.append(row_data)
+
+                meeting_table_map[placeholder] = {
+                    "headers": headers,
+                    "sections": sections,
+                    "original_html": str(table)
+                }
+                tables_to_remove.append((table, placeholder))
+                meeting_table_index += 1
+                self._debug("Converting meeting notes table to section format")
+
+        # Replace tables with placeholders
+        for table, placeholder in tables_to_remove:
+            table.replace_with(placeholder)
+
         # Check for complex tables that can't be converted to markdown
         # (tables with colspan/rowspan attributes)
         complex_table_map: Dict[str, str] = {}
@@ -1093,9 +1174,8 @@ class ConfluenceClient:
                 complex_table_index += 1
                 self._debug("Preserved complex table as HTML (has merged cells)")
 
-        # Protect complex content inside table cells (lists, multiple paragraphs, etc.)
-        # Markdown tables don't support block-level content in cells
-        # Keep as HTML to avoid breaking the structure
+        # Protect complex content inside table cells (lists, paragraphs)
+        # Markdown tables don't support newlines, so keep as compact HTML
         cell_content_map: Dict[str, str] = {}
         cell_index = 1
         for td in soup.find_all(["td", "th"]):
@@ -1103,8 +1183,11 @@ class ConfluenceClient:
             has_complex_content = td.find(["ul", "ol"])
             if has_complex_content:
                 placeholder = f"[[CELL-HTML-{cell_index}]]"
-                # Store original HTML
-                cell_content_map[placeholder] = "".join(str(c) for c in td.children)
+                # Store as compact single-line HTML (attrs already cleaned)
+                inner_html = "".join(str(c) for c in td.children)
+                # Compact: remove extra whitespace but keep structure
+                compact_html = " ".join(inner_html.split())
+                cell_content_map[placeholder] = compact_html
                 td.clear()
                 td.string = placeholder
                 cell_index += 1
@@ -1122,7 +1205,7 @@ class ConfluenceClient:
         # Restore <br> tags
         markdown = markdown.replace(br_placeholder, "<br/>")
 
-        # Restore complex cell content as HTML (safe, no conversion)
+        # Restore complex cell content as HTML (preserved for round-trip)
         for placeholder, html_content in cell_content_map.items():
             markdown = markdown.replace(placeholder, html_content)
 
@@ -1132,7 +1215,176 @@ class ConfluenceClient:
             preserved_table = f"\n<!-- Complex table preserved as HTML (has merged cells) -->\n{table_html}\n"
             markdown = markdown.replace(placeholder, preserved_table)
 
+        # Convert meeting tables to readable section format
+        for placeholder, table_data in meeting_table_map.items():
+            sections_md = self._meeting_table_to_sections(table_data)
+            markdown = markdown.replace(placeholder, sections_md)
+
         return markdown.strip(), macro_map
+
+    def _meeting_table_to_sections(self, table_data: dict) -> str:
+        """Convert meeting table data to readable section format."""
+        sections = table_data["sections"]
+        original_html = table_data.get("original_html", "")
+
+        # Encode original HTML for round-trip restoration
+        encoded_html = base64.b64encode(original_html.encode("utf-8")).decode("ascii")
+
+        # Find which column has macros (person identifier) and which has content
+        result_lines = [f"\n<!-- MEETING-NOTES-START:{encoded_html} -->"]
+
+        for section in sections:
+            # Find the macro placeholder (person identifier)
+            person_col = None
+            content_col = None
+            for col_name, content in section.items():
+                if "[[CONFLUENCE-MACRO-" in content:
+                    person_col = col_name
+                elif content.strip() and content.strip() != "-":
+                    if content_col is None:
+                        content_col = col_name
+                    else:
+                        # Multiple content columns - append
+                        section[content_col] = section[content_col] + "\n" + content
+
+            if person_col:
+                # Output as section header with the macro
+                person_content = section[person_col].strip()
+                result_lines.append(f"\n### {person_content}")
+
+            # Output content as list items
+            for col_name, content in section.items():
+                if col_name == person_col:
+                    continue
+                content = content.strip()
+                if content and content != "-":
+                    # Content is already in list format from _html_cell_to_text
+                    result_lines.append(content)
+
+        result_lines.append("\n<!-- MEETING-NOTES-END -->")
+        return "\n".join(result_lines)
+
+    def _sections_to_meeting_table(self, content: str) -> str:
+        """Convert section format back to HTML table using original structure."""
+        # Find meeting notes blocks with encoded original HTML
+        pattern = r'<!-- MEETING-NOTES-START:([A-Za-z0-9+/=]+) -->\s*(.*?)\s*<!-- MEETING-NOTES-END -->'
+
+        def convert_block(match):
+            encoded_html = match.group(1)
+            block_content = match.group(2)
+
+            # Decode original table HTML
+            try:
+                original_html = base64.b64decode(encoded_html.encode("ascii")).decode("utf-8")
+            except Exception:
+                self._debug("Failed to decode original table HTML")
+                return match.group(0)  # Return original if decoding failed
+
+            # Parse sections from edited content (### headers followed by list items)
+            edited_rows = []
+            current_person = None
+            current_notes = []
+
+            for line in block_content.split('\n'):
+                line = line.rstrip()
+                if line.startswith('### '):
+                    # Save previous section
+                    if current_person is not None:
+                        edited_rows.append((current_person, current_notes))
+                    current_person = line[4:].strip()
+                    current_notes = []
+                elif line.startswith('- ') or (line.startswith('  ') and current_notes):
+                    current_notes.append(line)
+                elif line.strip() and current_person is not None:
+                    # Other content line
+                    current_notes.append(line)
+
+            # Save last section
+            if current_person is not None:
+                edited_rows.append((current_person, current_notes))
+
+            if not edited_rows:
+                return original_html  # Return original if parsing failed
+
+            # Parse original table to inject updated content
+            soup = BeautifulSoup(original_html, "html.parser")
+            table = soup.find("table")
+            if not table:
+                return original_html
+
+            rows = table.find_all("tr")
+            if len(rows) < 2:
+                return original_html
+
+            # Map the edited content back to original rows
+            data_rows = rows[1:]  # Skip header
+            for row_idx, row in enumerate(data_rows):
+                if row_idx >= len(edited_rows):
+                    break
+
+                edited_person, edited_notes = edited_rows[row_idx]
+                cells = row.find_all(["td", "th"])
+
+                for cell_idx, cell in enumerate(cells):
+                    cell_text = cell.get_text()
+                    # Find cell with macro placeholder (person column)
+                    if "[[CONFLUENCE-MACRO-" in cell_text:
+                        # Update with edited person content (macro placeholder)
+                        cell.clear()
+                        cell.string = edited_person
+                    # Find cell with list (notes column)
+                    elif cell.find(["ul", "ol"]):
+                        # Convert edited notes back to HTML list
+                        notes_html = self._text_to_html_cell('\n'.join(edited_notes))
+                        cell.clear()
+                        # Parse and insert the notes HTML
+                        notes_soup = BeautifulSoup(notes_html, "html.parser")
+                        for child in notes_soup.children:
+                            cell.append(child)
+
+            return str(table)
+
+        # Also try pattern without encoded HTML (fallback for old format)
+        fallback_pattern = r'<!-- MEETING-NOTES-START -->\s*(.*?)\s*<!-- MEETING-NOTES-END -->'
+
+        def fallback_convert(match):
+            block_content = match.group(1)
+            rows = []
+            current_person = None
+            current_notes = []
+
+            for line in block_content.split('\n'):
+                line = line.rstrip()
+                if line.startswith('### '):
+                    if current_person is not None:
+                        rows.append((current_person, current_notes))
+                    current_person = line[4:].strip()
+                    current_notes = []
+                elif line.startswith('- ') or (line.startswith('  ') and current_notes):
+                    current_notes.append(line)
+                elif line.strip() and current_person is not None:
+                    current_notes.append(line)
+
+            if current_person is not None:
+                rows.append((current_person, current_notes))
+
+            if not rows:
+                return match.group(0)
+
+            table_rows = []
+            for person, notes in rows:
+                notes_html = self._text_to_html_cell('\n'.join(notes))
+                table_rows.append(f'<tr><td>{person}</td><td>{notes_html}</td></tr>')
+
+            return f'''<table>
+<tr><th>Wer</th><th>Notizen</th></tr>
+{''.join(table_rows)}
+</table>'''
+
+        # Try the new pattern first, then fallback
+        result = re.sub(pattern, convert_block, content, flags=re.DOTALL)
+        result = re.sub(fallback_pattern, fallback_convert, result, flags=re.DOTALL)
+        return result
 
     def _escape_markdown_heading(self, text: str) -> str:
         """Escape characters that can break markdown headings."""
@@ -1434,8 +1686,8 @@ class ConfluenceClient:
 
     def _markdown_to_html(self, markdown_content: str) -> str:
         """Convert markdown to HTML using proper markdown parser."""
-        # Use markdown library with table support
-        md = markdown.Markdown(extensions=["tables", "fenced_code", "nl2br"])
+        # Use markdown library with table support and HTML passthrough
+        md = markdown.Markdown(extensions=["tables", "fenced_code", "nl2br", "md_in_html"])
         html_content = md.convert(markdown_content)
         # Convert HTML5 <br> to XHTML <br/> for Confluence compatibility
         html_content = re.sub(r'<br\s*/?>', '<br/>', html_content)
@@ -1564,8 +1816,11 @@ class ConfluenceClient:
             skip_title = True
 
             for line in lines:
+                # Skip metadata comments but keep MEETING-NOTES markers
                 if line.startswith("<!--") and "-->" in line:
-                    continue  # Skip comment lines
+                    if "MEETING-NOTES-" in line:
+                        content_lines.append(line)  # Keep meeting notes markers
+                    continue  # Skip other comment lines
                 if skip_title and line.startswith("# "):
                     skip_title = False
                     continue  # Skip title line
@@ -1573,6 +1828,14 @@ class ConfluenceClient:
 
             # Join and clean up
             cleaned_content = "\n".join(content_lines).strip()
+
+            # Convert meeting notes sections back to table format
+            if "MEETING-NOTES-START" in cleaned_content:
+                self._debug("Found MEETING-NOTES markers, converting to table")
+                cleaned_content = self._sections_to_meeting_table(cleaned_content)
+                self._debug(f"After conversion (first 500): {cleaned_content[:500]}")
+            else:
+                self._debug("No MEETING-NOTES markers found in content")
 
             # Convert markdown to HTML first (with placeholders intact)
             html_content = self._markdown_to_html(cleaned_content)
