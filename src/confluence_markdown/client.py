@@ -1107,28 +1107,41 @@ class ConfluenceClient:
 
         all_tables = soup.find_all("table")
         for table_idx, table in enumerate(all_tables):
-            # Check if table has cells with both placeholders (macros) and lists
+            # Check if table has SEPARATE cells for macros and lists
+            # (person in one cell, notes in another cell)
             rows = table.find_all("tr")
             if len(rows) < 2:
                 continue
 
             # Check data rows (skip header)
-            has_macro_list_pattern = False
+            # We need: one cell with ONLY a macro, another cell with a list
+            has_meeting_pattern = False
             for row in rows[1:]:  # Skip header row
                 cells = row.find_all(["td", "th"])
-                row_has_macro = False
-                row_has_list = False
+                macro_only_cell = False
+                list_cell = False
                 for cell in cells:
-                    cell_text = cell.get_text()
-                    if "[[CONFLUENCE-MACRO-" in cell_text:
-                        row_has_macro = True
-                    if cell.find(["ul", "ol"]):
-                        row_has_list = True
-                if row_has_macro and row_has_list:
-                    has_macro_list_pattern = True
+                    cell_text = cell.get_text().strip()
+                    has_macro = "[[CONFLUENCE-MACRO-" in cell_text
+                    has_list = cell.find(["ul", "ol"]) is not None
+                    # Cell with ONLY a macro (no list in same cell)
+                    if has_macro and not has_list:
+                        # Check it's primarily a macro (not much other content)
+                        text_without_macro = cell_text
+                        import re as re_inner
+                        text_without_macro = re_inner.sub(
+                            r'\[\[CONFLUENCE-MACRO-\d+\]\]', '', text_without_macro
+                        ).strip()
+                        if len(text_without_macro) < 20:  # Mostly just the macro
+                            macro_only_cell = True
+                    # Cell with a list (but no macro, or macro is inline in notes)
+                    if has_list and not has_macro:
+                        list_cell = True
+                if macro_only_cell and list_cell:
+                    has_meeting_pattern = True
                     break
 
-            if has_macro_list_pattern:
+            if has_meeting_pattern:
                 # Convert table to section format
                 placeholder = f"[[MEETING-TABLE-{meeting_table_index}]]"
 
