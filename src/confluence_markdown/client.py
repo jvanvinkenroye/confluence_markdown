@@ -1044,8 +1044,14 @@ class ConfluenceClient:
         macro_map: Dict[str, str] = {}
         macro_index = 1
 
-        # Remove data-* attributes and other Confluence-specific attributes FIRST
-        # before any content extraction
+        # FIRST: Identify meeting-style tables and store their ORIGINAL HTML
+        # BEFORE any attribute modifications
+        meeting_table_originals: Dict[int, str] = {}
+        for idx, table in enumerate(soup.find_all("table")):
+            # Store original HTML with all attributes intact
+            meeting_table_originals[idx] = str(table)
+
+        # NOW remove data-* attributes and other Confluence-specific attributes
         for tag in soup.find_all(True):
             if not isinstance(tag, Tag):
                 continue
@@ -1099,7 +1105,8 @@ class ConfluenceClient:
         meeting_table_index = 1
         tables_to_remove = []
 
-        for table in soup.find_all("table"):
+        all_tables = soup.find_all("table")
+        for table_idx, table in enumerate(all_tables):
             # Check if table has cells with both placeholders (macros) and lists
             rows = table.find_all("tr")
             if len(rows) < 2:
@@ -1140,10 +1147,12 @@ class ConfluenceClient:
                         row_data[col_name] = self._html_cell_to_text(cell)
                     sections.append(row_data)
 
+                # Use the ORIGINAL HTML (with attributes) stored before cleanup
+                original_html = meeting_table_originals.get(table_idx, str(table))
                 meeting_table_map[placeholder] = {
                     "headers": headers,
                     "sections": sections,
-                    "original_html": str(table)
+                    "original_html": original_html
                 }
                 tables_to_remove.append((table, placeholder))
                 meeting_table_index += 1
@@ -1325,16 +1334,25 @@ class ConfluenceClient:
                 edited_person, edited_notes = edited_rows[row_idx]
                 cells = row.find_all(["td", "th"])
 
-                for cell_idx, cell in enumerate(cells):
-                    cell_text = cell.get_text()
-                    # Find cell with macro placeholder (person column)
-                    if "[[CONFLUENCE-MACRO-" in cell_text:
-                        # Update with edited person content (macro placeholder)
+                for cell in cells:
+                    # Find cell with macro (person column) - check for both
+                    # placeholder format and original ac: tags
+                    has_macro = (
+                        "[[CONFLUENCE-MACRO-" in cell.get_text() or
+                        cell.find(lambda t: t.name and t.name.startswith("ac:"))
+                    )
+                    has_list = cell.find(["ul", "ol"])
+
+                    if has_macro and not has_list:
+                        # Person column - restore the macro placeholder
+                        # The macro will be restored later by the macro_map
                         cell.clear()
-                        cell.string = edited_person
-                    # Find cell with list (notes column)
-                    elif cell.find(["ul", "ol"]):
-                        # Convert edited notes back to HTML list
+                        # Wrap in content-wrapper div if original had it
+                        wrapper = soup.new_tag("div")
+                        wrapper.string = edited_person
+                        cell.append(wrapper)
+                    elif has_list:
+                        # Notes column - update with edited content
                         notes_html = self._text_to_html_cell('\n'.join(edited_notes))
                         cell.clear()
                         # Parse and insert the notes HTML
