@@ -645,6 +645,134 @@ class ConfluenceClient:
 
         return created_page
 
+    def create_page_with_editor(
+        self,
+        space_key: str,
+        title: Optional[str] = None,
+        parent_id: Optional[str] = None,
+    ) -> Optional[dict]:
+        """
+        Create a new page using the system editor.
+
+        Opens an editor with a template, user writes content, then creates the page.
+
+        Args:
+            space_key: Space key where the page will be created
+            title: Optional page title (can be set in editor)
+            parent_id: Optional parent page ID for hierarchy
+
+        Returns:
+            Created page data, or None if cancelled
+        """
+        # Create template content
+        template_title = title or "New Page Title"
+        template = f"""# {template_title}
+
+<!-- Edit your page content below -->
+<!-- The first # heading will be used as the page title -->
+
+Write your content here in Markdown.
+
+## Section 1
+
+- Item 1
+- Item 2
+
+## Section 2
+
+More content...
+"""
+
+        # Create temporary file with template
+        with tempfile.NamedTemporaryFile(
+            mode="w", suffix=".md", delete=False
+        ) as temp_file:
+            temp_file.write(template)
+            temp_file_path = temp_file.name
+
+        try:
+            # Detect editor
+            editor = self._get_editor()
+            self._debug(f"Detected editor: {editor}")
+            self._debug(f"Temp file path: {temp_file_path}")
+
+            print(f"Opening editor: {editor}")
+            print(f"Creating new page in space: {space_key}")
+            print("Save and close the editor to create the page.")
+            print("The first # heading will be used as the page title.")
+
+            # Get original file modification time
+            original_mtime = os.path.getmtime(temp_file_path)
+
+            # Open editor
+            editor_cmd = editor + [temp_file_path]
+            editor_name = editor[0].lower()
+
+            # Terminal editors need proper TTY
+            terminal_editors = ("vim", "nvim", "vi", "nano", "emacs", "pico", "joe")
+            if editor_name in terminal_editors:
+                import shlex
+                cmd_str = " ".join(shlex.quote(arg) for arg in editor_cmd)
+                exit_code = os.system(cmd_str)
+                result = type("Result", (), {"returncode": exit_code >> 8})()
+            else:
+                result = subprocess.run(editor_cmd)
+
+            if result.returncode != 0:
+                print("Editor exited with error. Cancelling.")
+                return None
+
+            # Check if file was modified
+            new_mtime = os.path.getmtime(temp_file_path)
+            if new_mtime == original_mtime:
+                print("File was not modified. No page created.")
+                return None
+
+            # Read edited content
+            with open(temp_file_path, "r") as f:
+                edited_content = f.read()
+
+            # Extract title from first # heading
+            lines = edited_content.split("\n")
+            page_title = title
+            content_lines = []
+            found_title = False
+
+            for line in lines:
+                # Skip comment lines
+                if line.strip().startswith("<!--") and "-->" in line:
+                    continue
+                # Extract title from first # heading
+                if not found_title and line.startswith("# "):
+                    page_title = line[2:].strip()
+                    found_title = True
+                    continue
+                content_lines.append(line)
+
+            if not page_title:
+                print("Error: No title found. Use # Title at the start.")
+                return None
+
+            content = "\n".join(content_lines).strip()
+            if not content:
+                print("Error: No content provided.")
+                return None
+
+            # Create the page
+            print(f"Creating page: {page_title}")
+            return self.create_page(
+                space_key=space_key,
+                title=page_title,
+                content=content,
+                parent_id=parent_id,
+                content_type="markdown",
+            )
+
+        finally:
+            # Clean up temp file
+            if os.path.exists(temp_file_path):
+                os.unlink(temp_file_path)
+
     def create_task_page(
         self,
         parent_id: str,

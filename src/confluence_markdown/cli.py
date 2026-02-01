@@ -59,6 +59,7 @@ def create_parser() -> argparse.ArgumentParser:
             "add",
             "edit",
             "create",
+            "create-edit",
             "create-task",
             "test-auth",
             "edit-recent",
@@ -706,6 +707,20 @@ def handle_create(client: ConfluenceClient, args: argparse.Namespace) -> None:
         print(f"Page URL: {client.base_url}/pages/viewpage.action?pageId={page_id}")
 
 
+def handle_create_edit(client: ConfluenceClient, args: argparse.Namespace) -> None:
+    """Handle create-edit action - create page via editor."""
+    if not args.space:
+        raise ConfigurationError("--space is required for create-edit action")
+
+    result = client.create_page_with_editor(
+        space_key=args.space,
+        title=args.title,  # Optional
+        parent_id=args.parent_id,  # Optional
+    )
+    if result is None:
+        logger.info("Page creation cancelled or failed.")
+
+
 def handle_create_task(client: ConfluenceClient, args: argparse.Namespace) -> None:
     """Handle create-task action."""
     if not args.parent_id:
@@ -779,6 +794,7 @@ ACTION_HANDLERS = {
     "add": handle_add,
     "edit": handle_edit,
     "create": handle_create,
+    "create-edit": handle_create_edit,
     "create-task": handle_create_task,
     "list-children": handle_list_children,
 }
