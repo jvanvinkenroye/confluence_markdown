@@ -1239,36 +1239,29 @@ class ConfluenceClient:
         # Encode original HTML for round-trip restoration
         encoded_html = base64.b64encode(original_html.encode("utf-8")).decode("ascii")
 
-        # Find which column has macros (person identifier) and which has content
         result_lines = [f"\n<!-- MEETING-NOTES-START:{encoded_html} -->"]
 
         for section in sections:
-            # Find the macro placeholder (person identifier)
+            # Find the macro placeholder (person identifier) and list content
             person_col = None
-            content_col = None
+            notes_content = []
+
             for col_name, content in section.items():
+                content_stripped = content.strip()
                 if "[[CONFLUENCE-MACRO-" in content:
                     person_col = col_name
-                elif content.strip() and content.strip() != "-":
-                    if content_col is None:
-                        content_col = col_name
-                    else:
-                        # Multiple content columns - append
-                        section[content_col] = section[content_col] + "\n" + content
+                # Only include content that looks like list items (notes)
+                elif content_stripped.startswith("- ") or "\n- " in content_stripped:
+                    notes_content.append(content_stripped)
 
             if person_col:
                 # Output as section header with the macro
                 person_content = section[person_col].strip()
                 result_lines.append(f"\n### {person_content}")
 
-            # Output content as list items
-            for col_name, content in section.items():
-                if col_name == person_col:
-                    continue
-                content = content.strip()
-                if content and content != "-":
-                    # Content is already in list format from _html_cell_to_text
-                    result_lines.append(content)
+            # Output the notes content
+            for content in notes_content:
+                result_lines.append(content)
 
         result_lines.append("\n<!-- MEETING-NOTES-END -->")
         return "\n".join(result_lines)
