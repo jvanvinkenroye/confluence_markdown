@@ -1,10 +1,13 @@
 """Tests for the main confluence-markdown functionality."""
 
+import subprocess
+import sys
 from pathlib import Path
 import tempfile
 
 import pytest
 
+from confluence_markdown import __version__
 from confluence_markdown.main import ConfluenceClient
 from confluence_markdown.config import ConfigManager
 from confluence_markdown.cache import Cache
@@ -338,3 +341,33 @@ class TestConfluenceClient:
             base_url="https://example.com", token="test", cache_enabled=False
         )
         assert client.cache.enabled is False
+
+
+class TestCLI:
+    """End-to-end CLI tests via subprocess."""
+
+    def _run(self, *args: str) -> subprocess.CompletedProcess:
+        return subprocess.run(
+            [sys.executable, "-m", "confluence_markdown.main", *args],
+            capture_output=True,
+            text=True,
+        )
+
+    def test_help_exits_zero(self):
+        result = self._run("--help")
+        assert result.returncode == 0
+        assert "Confluence Data Center Markdown Tool" in result.stdout
+
+    def test_version_output(self):
+        result = self._run("--version")
+        assert result.returncode == 0
+        assert __version__ in result.stdout
+
+    def test_missing_auth_exits_nonzero(self):
+        result = self._run("--base-url", "https://example.com", "--action", "test-auth")
+        assert result.returncode != 0
+
+    def test_clear_cache_exits_zero(self):
+        result = self._run("--clear-cache")
+        assert result.returncode == 0
+        assert "Cleared" in result.stdout

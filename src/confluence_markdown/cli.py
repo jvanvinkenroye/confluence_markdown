@@ -11,6 +11,7 @@ from typing import Any
 
 import argcomplete
 
+from . import __version__
 from .cache import Cache
 from .client import ConfluenceClient
 from .config import ConfigManager
@@ -41,6 +42,11 @@ def setup_logging(verbose: bool = False, quiet: bool = False) -> None:
 def create_parser() -> argparse.ArgumentParser:
     """Create and configure the argument parser."""
     parser = argparse.ArgumentParser(description="Confluence Data Center Markdown Tool")
+    parser.add_argument(
+        "--version",
+        action="version",
+        version=f"%(prog)s {__version__}",
+    )
     parser.add_argument(
         "url",
         nargs="?",
