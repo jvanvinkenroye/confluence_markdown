@@ -15,6 +15,9 @@ DEFAULT_CACHE_DIR = Path.home() / ".cache" / "confluence-markdown"
 # Default TTL in seconds (1 hour)
 DEFAULT_TTL = 3600
 
+# Default max number of cache entries before oldest are evicted
+DEFAULT_MAX_ENTRIES = 500
+
 
 class Cache:
     """Simple file-based cache with TTL support."""
@@ -24,18 +27,12 @@ class Cache:
         cache_dir: Optional[Path] = None,
         ttl: int = DEFAULT_TTL,
         enabled: bool = True,
+        max_entries: int = DEFAULT_MAX_ENTRIES,
     ):
-        """
-        Initialize cache.
-
-        Args:
-            cache_dir: Directory for cache files
-            ttl: Time-to-live in seconds (default: 1 hour)
-            enabled: Whether caching is enabled
-        """
         self.cache_dir = cache_dir or DEFAULT_CACHE_DIR
         self.ttl = ttl
         self.enabled = enabled
+        self.max_entries = max_entries
 
         if self.enabled:
             self.cache_dir.mkdir(parents=True, exist_ok=True)
@@ -97,12 +94,13 @@ class Cache:
         try:
             data = {
                 "timestamp": time.time(),
-                "key": key[:100],  # Store truncated key for debugging
+                "key": key[:100],
                 "value": value,
             }
             with open(cache_path, "w") as f:
                 json.dump(data, f)
             logger.debug("Cached value for key: %s", key[:50])
+            self._evict_if_needed()
         except (TypeError, OSError) as e:
             logger.debug("Cache write error: %s", e)
 
@@ -134,6 +132,18 @@ class Cache:
 
         logger.info("Cleared %d cache files", count)
         return count
+
+    def _evict_if_needed(self) -> None:
+        """Remove oldest entries when cache exceeds max_entries."""
+        cache_files = list(self.cache_dir.glob("*.json"))
+        if len(cache_files) <= self.max_entries:
+            return
+        # Sort by mtime, remove oldest
+        cache_files.sort(key=lambda p: p.stat().st_mtime)
+        to_remove = cache_files[: len(cache_files) - self.max_entries]
+        for f in to_remove:
+            f.unlink(missing_ok=True)
+        logger.debug("Evicted %d cache entries (limit: %d)", len(to_remove), self.max_entries)
 
     def cleanup_expired(self) -> int:
         """

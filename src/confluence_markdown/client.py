@@ -226,15 +226,15 @@ class ConfluenceClient:
         self._debug(f"Response content (first 500 chars): {response.text[:500]}")
 
         if response.status_code != 200:
-            print(f"ERROR: HTTP {response.status_code}")
-            print(f"ERROR: Full response: {response.text}")
+            logger.error("HTTP %s", response.status_code)
+            logger.error("Full response: %s", response.text)
             response.raise_for_status()
 
         try:
             return response.json()
         except Exception as e:
-            print(f"ERROR: Failed to parse JSON response: {e}")
-            print(f"ERROR: Full response text: {response.text}")
+            logger.error("Failed to parse JSON response: %s", e)
+            logger.error("Full response text: %s", response.text)
             raise
 
     def _recent_pages_cql_variants(self) -> list:
@@ -265,38 +265,44 @@ class ConfluenceClient:
             return cql
         return f"type=page AND ({cql})"
 
-    def list_recent_pages(self, limit: int = 10) -> list:
-        """List recently edited pages for the current user."""
+    # Confluence Search API max results per page
+    _SEARCH_PAGE_SIZE = 25
+
+    def _search_paginated(self, cql: str, limit: int, extra_params: Optional[dict] = None) -> list:
+        """Fetch up to `limit` search results, paginating as needed."""
         url = f"{self.api_base}/search"
-        self._debug(f"Fetching recent pages from: {url}")
-        data = None
-        for cql in self._recent_pages_cql_variants():
-            params = {
+        results: list = []
+        start = 0
+        while len(results) < limit:
+            fetch = min(self._SEARCH_PAGE_SIZE, limit - len(results))
+            params: dict = {
                 "cql": cql,
-                "limit": limit,
+                "limit": fetch,
+                "start": start,
                 "expand": "content.space,content.version",
             }
+            if extra_params:
+                params.update(extra_params)
             response = self.session.get(url, params=params)
-            if response.status_code == 200:
-                data = response.json()
+            if response.status_code != 200:
+                logger.error("HTTP %s", response.status_code)
+                logger.error("Full response: %s", response.text)
+                response.raise_for_status()
+            data = response.json()
+            batch = data.get("results", [])
+            results.extend(batch)
+            # Stop if Confluence signals no more results
+            if len(batch) < fetch or not data.get("_links", {}).get("next"):
                 break
-            if response.status_code == 400 and (
-                "No field exists" in response.text
-                or "Could not parse cql" in response.text
-            ):
-                continue
-            print(f"ERROR: HTTP {response.status_code}")
-            print(f"ERROR: Full response: {response.text}")
-            response.raise_for_status()
+            start += len(batch)
+        return results
 
-        if data is None:
-            raise RuntimeError(
-                "Confluence rejected all recent-page CQL variants. "
-                "This instance may not support user-based filters."
-            )
+    def _items_to_pages(self, items: list, page_type_filter: bool = False) -> list:
         pages = []
-        for item in data.get("results", []):
+        for item in items:
             content = item.get("content", item)
+            if page_type_filter and content.get("type") and content.get("type") != "page":
+                continue
             page_id = content.get("id")
             if not page_id:
                 continue
@@ -311,107 +317,67 @@ class ConfluenceClient:
                     "url": f"{self.base_url}/pages/viewpage.action?pageId={page_id}",
                 }
             )
-
         return pages
+
+    def list_recent_pages(self, limit: int = 10) -> list:
+        """List recently edited pages for the current user."""
+        self._debug(f"Fetching recent pages (limit={limit})")
+        for cql in self._recent_pages_cql_variants():
+            params = {"cql": cql, "limit": 1, "expand": ""}
+            probe = self.session.get(f"{self.api_base}/search", params=params)
+            if probe.status_code == 400 and (
+                "No field exists" in probe.text or "Could not parse cql" in probe.text
+            ):
+                continue
+            if probe.status_code not in (200, 400):
+                logger.error("HTTP %s", probe.status_code)
+                probe.raise_for_status()
+            # This CQL works — fetch full result set with pagination
+            items = self._search_paginated(cql, limit)
+            return self._items_to_pages(items)
+
+        raise RuntimeError(
+            "Confluence rejected all recent-page CQL variants. "
+            "This instance may not support user-based filters."
+        )
 
     def list_recently_viewed_pages(self, limit: int = 10, use_cache: bool = True) -> list:
         """List recently viewed pages for the current user."""
         cache_key = f"recently_viewed:{self.base_url}:{limit}"
 
-        # Try cache first
         if use_cache:
             cached = self.cache.get(cache_key)
             if cached is not None:
                 self._debug("Using cached recently viewed pages")
                 return cached
 
-        url = f"{self.api_base}/search"
-        self._debug(f"Fetching recently viewed pages from: {url}")
-        data = None
+        self._debug(f"Fetching recently viewed pages (limit={limit})")
         for cql in self._recently_viewed_cql_variants():
-            params = {
-                "cql": cql,
-                "limit": limit,
-                "expand": "content.space,content.version",
-            }
-            response = self.session.get(url, params=params)
-            if response.status_code == 200:
-                data = response.json()
-                break
-            if response.status_code == 400 and (
-                "No field exists" in response.text
-                or "Could not parse cql" in response.text
+            probe = self.session.get(
+                f"{self.api_base}/search", params={"cql": cql, "limit": 1, "expand": ""}
+            )
+            if probe.status_code == 400 and (
+                "No field exists" in probe.text or "Could not parse cql" in probe.text
             ):
                 continue
-            print(f"ERROR: HTTP {response.status_code}")
-            print(f"ERROR: Full response: {response.text}")
-            response.raise_for_status()
+            if probe.status_code not in (200, 400):
+                logger.error("HTTP %s", probe.status_code)
+                probe.raise_for_status()
+            items = self._search_paginated(cql, limit)
+            pages = self._items_to_pages(items)
+            self.cache.set(cache_key, pages)
+            return pages
 
-        if data is None:
-            raise RuntimeError(
-                "Confluence rejected all recently-viewed CQL variants. "
-                "This instance may not support view tracking."
-            )
-
-        pages = []
-        for item in data.get("results", []):
-            content = item.get("content", item)
-            page_id = content.get("id")
-            if not page_id:
-                continue
-            space = content.get("space", {})
-            version = content.get("version", {})
-            pages.append(
-                {
-                    "id": page_id,
-                    "title": content.get("title", "(untitled)"),
-                    "space": space.get("key", "UNKNOWN"),
-                    "last_modified": version.get("when", "unknown"),
-                    "url": f"{self.base_url}/pages/viewpage.action?pageId={page_id}",
-                }
-            )
-
-        # Cache the result
-        self.cache.set(cache_key, pages)
-        return pages
+        raise RuntimeError(
+            "Confluence rejected all recently-viewed CQL variants. "
+            "This instance may not support view tracking."
+        )
 
     def search_pages(self, cql: str, limit: int = 10) -> list:
         """Search pages using the provided CQL."""
-        url = f"{self.api_base}/search"
-        self._debug(f"Searching pages with CQL: {cql}")
-        params = {
-            "cql": cql,
-            "limit": limit,
-            "expand": "content.space,content.version",
-        }
-        response = self.session.get(url, params=params)
-        if response.status_code != 200:
-            print(f"ERROR: HTTP {response.status_code}")
-            print(f"ERROR: Full response: {response.text}")
-            response.raise_for_status()
-
-        data = response.json()
-        pages = []
-        for item in data.get("results", []):
-            content = item.get("content", item)
-            if content.get("type") and content.get("type") != "page":
-                continue
-            page_id = content.get("id")
-            if not page_id:
-                continue
-            space = content.get("space", {})
-            version = content.get("version", {})
-            pages.append(
-                {
-                    "id": page_id,
-                    "title": content.get("title", "(untitled)"),
-                    "space": space.get("key", "UNKNOWN"),
-                    "last_modified": version.get("when", "unknown"),
-                    "url": f"{self.base_url}/pages/viewpage.action?pageId={page_id}",
-                }
-            )
-
-        return pages
+        self._debug(f"Searching pages with CQL: {cql} (limit={limit})")
+        items = self._search_paginated(cql, limit)
+        return self._items_to_pages(items, page_type_filter=True)
 
     def list_children(self, page_url: str, limit: int = 50) -> list:
         """
@@ -630,8 +596,8 @@ class ConfluenceClient:
         response = self._request("POST", url, json=page_data)
 
         if response.status_code not in (200, 201):
-            print(f"ERROR: HTTP {response.status_code}")
-            print(f"ERROR: Full response: {response.text}")
+            logger.error("HTTP %s", response.status_code)
+            logger.error("Full response: %s", response.text)
 
         response.raise_for_status()
 
@@ -1546,10 +1512,11 @@ More content...
 
     def _redact_headers(self, headers: Dict[str, str]) -> Dict[str, str]:
         """Redact sensitive headers before logging."""
-        redacted = dict(headers)
-        if "Authorization" in redacted:
-            redacted["Authorization"] = "REDACTED"
-        return redacted
+        sensitive = {"authorization", "x-authorization", "token", "x-auth-token", "cookie"}
+        return {
+            k: "REDACTED" if k.lower() in sensitive else v
+            for k, v in headers.items()
+        }
 
     def _debug(self, message: str) -> None:
         """Print debug output when verbose is enabled."""
@@ -1845,12 +1812,16 @@ More content...
         html_content = re.sub(r'<br\s*/?>', '<br/>', html_content)
         return html_content
 
-    def edit_page_with_editor(self, page_url: str) -> dict:
+    def edit_page_with_editor(
+        self, page_url: str, content: Optional[str] = None, content_type: str = "markdown"
+    ) -> dict:
         """
-        Edit page content using system editor.
+        Edit page content using system editor or provided content.
 
         Args:
             page_url: Full URL to the Confluence page
+            content: If provided, skip the editor and use this content directly.
+            content_type: 'markdown' (default) or 'html' — only used when content is provided.
 
         Returns:
             Updated page data
@@ -1890,59 +1861,71 @@ More content...
             temp_file_path = temp_file.name
 
         try:
-            # Detect editor
-            editor = self._get_editor()
-            self._debug(f"Detected editor: {editor}")
-            self._debug(f"Temp file path: {temp_file_path}")
-
-            print(f"Opening editor: {editor}")
-            print(f"Editing page: {page_data['title']}")
-            print(
-                "Save and close the editor to upload changes, or exit without saving to cancel."
-            )
-
-            # Get original file modification time
-            original_mtime = os.path.getmtime(temp_file_path)
-            self._debug(f"Original file mtime: {original_mtime}")
-
-            # Open editor - use os.system for proper TTY handling with terminal editors
-            editor_cmd = editor + [temp_file_path]
-            editor_name = editor[0].lower()
-            self._debug(f"Editor name: {editor_name}")
-
-            # GUI editors need --wait flag
-            if editor_name == "code":
-                editor_cmd = editor + ["--wait", temp_file_path]
-                self._debug("Added --wait flag for VS Code")
-
-            # Terminal editors (vim, nvim, nano, etc.) need proper TTY
-            terminal_editors = ("vim", "nvim", "vi", "nano", "emacs", "pico", "joe")
-            if editor_name in terminal_editors:
-                # Use os.system for proper TTY handling
-                import shlex
-                cmd_str = " ".join(shlex.quote(arg) for arg in editor_cmd)
-                self._debug(f"Using os.system for terminal editor: {cmd_str}")
-                exit_code = os.system(cmd_str)
-                self._debug(f"os.system exit code (raw): {exit_code}")
-                result = type("Result", (), {"returncode": exit_code >> 8})()
-                self._debug(f"Editor return code: {result.returncode}")
+            if content is not None:
+                # Non-interactive mode: write provided content directly to temp file
+                self._debug("Non-interactive edit: using provided content")
+                if content_type == "html":
+                    new_markdown, _ = self._html_to_markdown_with_macros(content)
+                    write_content = new_markdown
+                else:
+                    write_content = content
+                with open(temp_file_path, "w") as f:
+                    f.write(f"# {page_data['title']}\n\n")
+                    f.write(write_content)
+                    if macro_map:
+                        encoded_macros = self._encode_macro_map(macro_map)
+                        f.write("\n\n<!-- CONFLUENCE_MACROS_START\n")
+                        f.write(encoded_macros)
+                        f.write("\nCONFLUENCE_MACROS_END -->\n")
             else:
-                self._debug(f"Using subprocess.run: {editor_cmd}")
-                result = subprocess.run(editor_cmd)
-                self._debug(f"Editor return code: {result.returncode}")
+                # Interactive mode: open system editor
+                editor = self._get_editor()
+                self._debug(f"Detected editor: {editor}")
+                self._debug(f"Temp file path: {temp_file_path}")
 
-            if result.returncode != 0:
-                self._debug(f"Editor failed with code: {result.returncode}")
-                print("Editor exited with error code. Cancelling upload.")
-                return None
+                print(f"Opening editor: {editor}")
+                print(f"Editing page: {page_data['title']}")
+                print(
+                    "Save and close the editor to upload changes, or exit without saving to cancel."
+                )
 
-            # Check if file was modified
-            new_mtime = os.path.getmtime(temp_file_path)
-            self._debug(f"New file mtime: {new_mtime}")
-            if new_mtime == original_mtime:
-                self._debug("File mtime unchanged - no modifications detected")
-                print("File was not modified. No changes to upload.")
-                return None
+                # Get original file modification time
+                original_mtime = os.path.getmtime(temp_file_path)
+                self._debug(f"Original file mtime: {original_mtime}")
+
+                editor_cmd = editor + [temp_file_path]
+                editor_name = editor[0].lower()
+                self._debug(f"Editor name: {editor_name}")
+
+                if editor_name == "code":
+                    editor_cmd = editor + ["--wait", temp_file_path]
+                    self._debug("Added --wait flag for VS Code")
+
+                terminal_editors = ("vim", "nvim", "vi", "nano", "emacs", "pico", "joe")
+                if editor_name in terminal_editors:
+                    cmd_str = " ".join(shlex.quote(arg) for arg in editor_cmd)
+                    self._debug(f"Using os.system for terminal editor: {cmd_str}")
+                    exit_code = os.system(cmd_str)
+                    self._debug(f"os.system exit code (raw): {exit_code}")
+                    result = type("Result", (), {"returncode": exit_code >> 8})()
+                    self._debug(f"Editor return code: {result.returncode}")
+                else:
+                    self._debug(f"Using subprocess.run: {editor_cmd}")
+                    result = subprocess.run(editor_cmd)
+                    self._debug(f"Editor return code: {result.returncode}")
+
+                if result.returncode != 0:
+                    self._debug(f"Editor failed with code: {result.returncode}")
+                    print("Editor exited with error code. Cancelling upload.")
+                    return None
+
+                # Check if file was modified
+                new_mtime = os.path.getmtime(temp_file_path)
+                self._debug(f"New file mtime: {new_mtime}")
+                if new_mtime == original_mtime:
+                    self._debug("File mtime unchanged - no modifications detected")
+                    print("File was not modified. No changes to upload.")
+                    return None
 
             self._debug("File was modified, reading content...")
             # Read edited content
@@ -2020,8 +2003,8 @@ More content...
             self._debug(f"Update response status: {response.status_code}")
             if response.status_code != 200:
                 self._debug(f"Update response body: {response.text[:2000]}")
-                print(f"ERROR: HTTP {response.status_code}")
-                print(f"ERROR: {response.text[:500]}")
+                logger.error("HTTP %s", response.status_code)
+                logger.error("%s", response.text[:500])
             if response.status_code == 409:
                 raise RuntimeError(
                     "Confluence rejected the update due to a version conflict. "

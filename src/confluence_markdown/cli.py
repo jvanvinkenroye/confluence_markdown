@@ -111,7 +111,7 @@ def create_parser() -> argparse.ArgumentParser:
         default="markdown",
         help="Table format during editing: markdown (default) or yaml (easier to edit)",
     )
-    parser.add_argument("--content", help="Content to add (for add/create action)")
+    parser.add_argument("--content", help="Content to add/set (for add/create/edit action)")
     parser.add_argument(
         "--content-type",
         choices=["markdown", "html"],
@@ -309,9 +309,7 @@ def save_config_if_requested(args: argparse.Namespace, config_manager: ConfigMan
     if args.token:
         config_data["token"] = args.token
     elif args.password:
-        save_pass = input("Save password in config? (y/N): ").lower() == "y"
-        if save_pass:
-            config_data["password"] = args.password
+        config_data["password"] = args.password
 
     config_manager.save_config(config_data, args.profile)
 
@@ -679,7 +677,10 @@ def handle_edit(client: ConfluenceClient, args: argparse.Namespace) -> None:
     if not args.url:
         raise ConfigurationError("URL is required for edit action")
 
-    result = client.edit_page_with_editor(args.url)
+    content = getattr(args, "content", None) or None
+    content_type = getattr(args, "content_type", "markdown") or "markdown"
+
+    result = client.edit_page_with_editor(args.url, content=content, content_type=content_type)
     if result is None:
         logger.info("Edit cancelled or no changes made.")
     else:
@@ -696,8 +697,8 @@ def handle_create(client: ConfluenceClient, args: argparse.Namespace) -> None:
     """Handle create action."""
     if not args.space:
         raise ConfigurationError("--space is required for create action")
-    if not args.title:
-        raise ConfigurationError("--title is required for create action")
+    if not args.title or not args.title.strip():
+        raise ConfigurationError("--title is required for create action and must not be empty")
     if not args.content:
         raise ConfigurationError("--content is required for create action")
 
