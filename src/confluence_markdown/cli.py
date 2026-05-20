@@ -72,6 +72,7 @@ def create_parser() -> argparse.ArgumentParser:
             "read-recent",
             "search",
             "list-children",
+            "config",
         ],
         default="read-recent",
         help="Action to perform",
@@ -320,6 +321,9 @@ def validate_auth(args: argparse.Namespace) -> None:
         raise ConfigurationError(
             "--base-url is required (or use --config to load from saved profile)"
         )
+    # config test uses test-auth logic — no page URL required
+    if args.action == "config":
+        return
     if not args.token and not (args.username and args.password):
         raise AuthenticationError(
             "Either --token or --username/--password must be provided"
@@ -790,6 +794,55 @@ def handle_list_children(client: ConfluenceClient, args: argparse.Namespace) -> 
         print()
 
 
+def handle_config(config_manager: ConfigManager, args: argparse.Namespace) -> None:
+    """Handle config subcommands: show, list, set, delete."""
+    subcommand = (args.url or "show").lower()
+
+    if subcommand == "list":
+        handle_list_profiles(config_manager)
+
+    elif subcommand == "show":
+        profile = args.profile or "default"
+        config = config_manager.load_config(profile)
+        if not config:
+            print(f"No config found for profile '{profile}'")
+            return
+        print(f"Profile: {profile}")
+        for k, v in config.items():
+            if k in ("token", "password"):
+                print(f"  {k}: ****")
+            else:
+                print(f"  {k}: {v}")
+
+    elif subcommand == "set":
+        base_url = args.base_url or input("Base URL: ").strip()
+        username = args.username or input("Username (leave blank for bearer token auth): ").strip() or None
+        token = args.token or getpass.getpass("Token (leave blank to use password): ")
+        config_data: dict = {"base_url": base_url}
+        if username:
+            config_data["username"] = username
+        if token:
+            config_data["token"] = token
+        elif username:
+            config_data["password"] = getpass.getpass("Password: ")
+        config_manager.save_config(config_data, args.profile or "default")
+
+    elif subcommand == "delete":
+        profile = args.profile or "default"
+        config_manager.delete_profile(profile)
+
+    elif subcommand == "test":
+        raise ConfigurationError(
+            "'config test' requires authentication — add --config (or --token/--username/--password)"
+        )
+
+    else:
+        raise ConfigurationError(
+            f"Unknown config subcommand: '{subcommand}'. "
+            "Valid: show, list, set, delete, test"
+        )
+
+
 # Action handlers mapping
 ACTION_HANDLERS = {
     "test-auth": handle_test_auth,
@@ -853,6 +906,13 @@ def main():
             config_manager.delete_profile(args.profile)
             sys.exit(0)
 
+        # config action: show/list/set/delete exit early; test falls through to auth
+        if args.action == "config":
+            subcommand = (args.url or "show").lower()
+            if subcommand != "test":
+                handle_config(config_manager, args)
+                sys.exit(0)
+
         # Load credentials
         load_credentials(args, config_manager)
         save_config_if_requested(args, config_manager)
@@ -863,11 +923,11 @@ def main():
 
         # Create client and execute action
         client = create_client(args)
-        handler = ACTION_HANDLERS.get(args.action)
-        if handler:
-            if args.action == "test-auth":
-                handler(client)
-            else:
+        if args.action in ("test-auth", "config"):
+            handle_test_auth(client)
+        else:
+            handler = ACTION_HANDLERS.get(args.action)
+            if handler:
                 handler(client, args)
 
     except ConfigurationError as e:

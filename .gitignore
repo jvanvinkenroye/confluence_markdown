@@ -29,6 +29,9 @@ test-*.md
 # Claude Code
 .claude/
 
+# MkDocs build output
+site/
+
 # One-off scripts with credentials
 add_*.py
 create_*.py

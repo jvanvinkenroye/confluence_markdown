@@ -44,6 +44,8 @@ confluence-markdown = "confluence_markdown.main:main"
 
 [dependency-groups]
 dev = [
+    "mkdocs>=1.6.1",
+    "mkdocs-material>=9.7.6",
     "pytest>=7.0.0",
     "pytest-cov>=4.0.0",
 ]

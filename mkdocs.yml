@@ -1,0 +1,48 @@
+site_name: confluence-markdown
+site_description: CLI tool for reading, editing, and managing Confluence Data Center pages in Markdown format
+site_url: https://jvanvinkenroye.github.io/confluence_markdown/
+repo_url: https://github.com/jvanvinkenroye/confluence_markdown
+repo_name: jvanvinkenroye/confluence_markdown
+
+theme:
+  name: material
+  language: en
+  palette:
+    - scheme: default
+      primary: indigo
+      accent: indigo
+      toggle:
+        icon: material/brightness-7
+        name: Switch to dark mode
+    - scheme: slate
+      primary: indigo
+      accent: indigo
+      toggle:
+        icon: material/brightness-4
+        name: Switch to light mode
+  features:
+    - navigation.tabs
+    - navigation.sections
+    - navigation.top
+    - search.highlight
+    - search.suggest
+    - content.code.copy
+
+markdown_extensions:
+  - admonition
+  - pymdownx.highlight:
+      anchor_linenums: true
+  - pymdownx.superfences
+  - pymdownx.inlinehilite
+  - pymdownx.tabbed:
+      alternate_style: true
+  - tables
+  - toc:
+      permalink: true
+
+nav:
+  - Home: index.md
+  - User Guide: usage.md
+
+plugins:
+  - search
