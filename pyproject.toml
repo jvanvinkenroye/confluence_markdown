@@ -48,6 +48,7 @@ dev = [
     "mkdocs-material>=9.7.6",
     "pytest>=7.0.0",
     "pytest-cov>=4.0.0",
+    "ruff>=0.15.13",
 ]
 
 [tool.uv]
