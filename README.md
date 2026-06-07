@@ -9,7 +9,7 @@ A Python CLI tool to download, read, edit, and manage Confluence Data Center pag
 - Read page content directly in terminal with Rich rendering
 - Edit pages in your preferred editor (vim, VS Code, nano, etc.)
 - Add content to existing pages (markdown or HTML)
-- Create new pages with templates
+- Create new pages with templates (interactive space and parent selection)
 - Create task pages with Page Properties macro
 
 ### Navigation & Search
@@ -161,13 +161,16 @@ confluence-markdown --action list-children --recursive "PAGE_URL"
 ### Creating Pages
 
 ```bash
-# Create new page
+# Fully interactive: select space and parent page via fzf
+confluence-markdown --action create-edit
+
+# Non-interactive: all parameters provided
 confluence-markdown --action create \
   --space MYSPACE \
   --title "My New Page" \
   --content "# Welcome\n\nPage content here"
 
-# Create child page
+# Create child page (parent-id known)
 confluence-markdown --action create \
   --space MYSPACE \
   --title "Child Page" \

@@ -426,6 +426,21 @@ class ConfluenceClient:
 
         return pages
 
+    def list_spaces(self, limit: int = 100) -> list:
+        """Return list of spaces as [{key, name, url}]."""
+        url = f"{self.api_base}/space"
+        params = {"limit": limit, "type": "global", "status": "current"}
+        response = self._request("GET", url, params=params)
+        results = response.json().get("results", [])
+        return [
+            {
+                "key": s["key"],
+                "name": s.get("name", s["key"]),
+                "url": f"{self.base_url}/display/{s['key']}",
+            }
+            for s in results
+        ]
+
     def download_as_markdown(
         self, page_url: str, output_file: Optional[str] = None
     ) -> str:

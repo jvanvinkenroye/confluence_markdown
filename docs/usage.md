@@ -301,10 +301,30 @@ This page is outdated." \
 
 ## Creating Pages
 
-### Create a new page
+### Fully interactive (recommended)
+
+When `--space` and `--parent-id` are omitted, the tool guides you interactively:
+
+1. **Space selection** — fzf list of all available spaces
+2. **Parent page selection** — choose one of:
+   - *No parent* — page is created at root level
+   - *Search in space* — all pages in the space loaded into fzf for fuzzy search
+   - *Pick from recent pages* — last 20 modified pages in fzf
 
 ```bash
-confluence-markdown --action create --config \
+# Fully interactive: select space, parent, then edit in editor
+confluence-markdown --action create-edit
+
+# Space known, parent interactive
+confluence-markdown --action create-edit --space MYSPACE
+```
+
+### Non-interactive (scripting)
+
+Provide all parameters to skip every prompt:
+
+```bash
+confluence-markdown --action create \
   --space MYSPACE \
   --title "New Page" \
   --content "## Introduction
@@ -312,10 +332,10 @@ confluence-markdown --action create --config \
 This is the content of the new page."
 ```
 
-As a child of an existing page:
+As a child of a known page:
 
 ```bash
-confluence-markdown --action create --config \
+confluence-markdown --action create \
   --space MYSPACE \
   --title "Child Page" \
   --parent-id 12345 \
@@ -324,19 +344,14 @@ confluence-markdown --action create --config \
 
 ### Create a page in the editor
 
-Opens the editor with a template — title and content are set directly in the editor:
+Opens the editor with a template — title is taken from the first `#` heading:
 
 ```bash
-confluence-markdown --action create-edit --config \
-  --space MYSPACE
-```
+# Fully interactive
+confluence-markdown --action create-edit
 
-With a pre-filled title:
-
-```bash
-confluence-markdown --action create-edit --config \
-  --space MYSPACE \
-  --title "Draft: New Page"
+# With pre-filled title
+confluence-markdown --action create-edit --space MYSPACE --title "Draft: New Page"
 ```
 
 ### Create a task page

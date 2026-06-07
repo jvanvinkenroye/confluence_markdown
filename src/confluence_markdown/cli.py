@@ -453,6 +453,49 @@ def require_inquirer():
         sys.exit(1)
 
 
+def pick_space(client: ConfluenceClient, args: argparse.Namespace) -> str:
+    """Interactive space selection. Returns space key."""
+    spaces = client.list_spaces()
+    if not spaces:
+        raise ConfigurationError("No spaces found. Use --space to specify manually.")
+    choices = [{"name": f"{s['key']} — {s['name']}", "value": s["key"]} for s in spaces]
+    key = select_page(choices, "Select a space", use_fzf=not args.no_fzf)
+    if not key:
+        raise ConfigurationError("No space selected.")
+    return key
+
+
+def pick_parent(client: ConfluenceClient, args: argparse.Namespace) -> str | None:
+    """Interactive parent page selection. Returns page ID or None."""
+    mode_choices = [
+        {"name": "No parent (root level)", "value": "none"},
+        {"name": "Search for a page", "value": "search"},
+        {"name": "Pick from recent pages", "value": "recent"},
+    ]
+    mode = select_page(mode_choices, "Select parent page", use_fzf=not args.no_fzf)
+    if not mode or mode == "none":
+        return None
+
+    space_filter = f' AND space="{args.space}"' if args.space else ""
+
+    if mode == "search":
+        cql = f"type=page{space_filter} order by title"
+        pages = client.search_pages(cql, limit=500)
+    else:
+        cql = f"type=page{space_filter} order by lastmodified desc"
+        pages = client.search_pages(cql, limit=20)
+
+    if not pages:
+        print("No pages found.")
+        return None
+
+    choices = [
+        {"name": f"{p['title']} [{p['space']}]", "value": p["id"]}
+        for p in pages
+    ]
+    return select_page(choices, "Select parent page", use_fzf=not args.no_fzf)
+
+
 def get_rich_modules():
     """Import and return Rich modules, or None if not available."""
     try:
@@ -700,7 +743,9 @@ def handle_edit(client: ConfluenceClient, args: argparse.Namespace) -> None:
 def handle_create(client: ConfluenceClient, args: argparse.Namespace) -> None:
     """Handle create action."""
     if not args.space:
-        raise ConfigurationError("--space is required for create action")
+        args.space = pick_space(client, args)
+    if not args.parent_id:
+        args.parent_id = pick_parent(client, args)
     if not args.title or not args.title.strip():
         raise ConfigurationError("--title is required for create action and must not be empty")
     if not args.content:
@@ -721,7 +766,9 @@ def handle_create(client: ConfluenceClient, args: argparse.Namespace) -> None:
 def handle_create_edit(client: ConfluenceClient, args: argparse.Namespace) -> None:
     """Handle create-edit action - create page via editor."""
     if not args.space:
-        raise ConfigurationError("--space is required for create-edit action")
+        args.space = pick_space(client, args)
+    if not args.parent_id:
+        args.parent_id = pick_parent(client, args)
 
     result = client.create_page_with_editor(
         space_key=args.space,
