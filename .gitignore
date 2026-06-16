@@ -29,6 +29,20 @@ test-*.md
 # Claude Code
 .claude/
 
+# Agent and LLM configuration (kept out of version control)
+AGENTS.md
+CLAUDE.md
+GEMINI.md
+.codex/
+.cursor/
+.cursorrules
+.windsurfrules
+.aider*
+.gemini/
+.antigravity/
+.junie/
+.mcp.json
+
 # MkDocs build output
 site/
 
