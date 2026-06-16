@@ -39,8 +39,12 @@ dependencies = [
 Repository = "https://github.com/jvanvinkenroye/confluence_markdown"
 Issues = "https://github.com/jvanvinkenroye/confluence_markdown/issues"
 
+[project.optional-dependencies]
+mcp = ["mcp>=1.9.0"]
+
 [project.scripts]
 confluence-markdown = "confluence_markdown.main:main"
+confluence-markdown-mcp = "confluence_markdown.mcp_server:main"
 
 [dependency-groups]
 dev = [

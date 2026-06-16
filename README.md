@@ -360,6 +360,64 @@ Config Management:
   --delete-profile      Delete profile specified by --profile
 ```
 
+## MCP Server (Claude Desktop / AI agents)
+
+The tool can run as an [MCP](https://modelcontextprotocol.io/) stdio server, exposing Confluence operations as tools that Claude and other MCP clients can call directly.
+
+### Install the MCP extra
+
+```bash
+uv pip install -e ".[mcp]"
+```
+
+### Configure Claude Desktop
+
+Edit `~/Library/Application Support/Claude/claude_desktop_config.json`:
+
+```json
+{
+  "mcpServers": {
+    "confluence": {
+      "command": "/absolute/path/to/.venv/bin/confluence-markdown-mcp"
+    }
+  }
+}
+```
+
+The server reuses your saved config profile automatically (same credentials as the CLI). If you haven't saved credentials yet, run `confluence-markdown --save-config` first, or pass env vars:
+
+```json
+{
+  "mcpServers": {
+    "confluence": {
+      "command": "/absolute/path/to/.venv/bin/confluence-markdown-mcp",
+      "env": {
+        "CONFLUENCE_URL": "https://wiki.example.com",
+        "CONFLUENCE_USERNAME": "user",
+        "CONFLUENCE_TOKEN": "PAT"
+      }
+    }
+  }
+}
+```
+
+### Available MCP tools
+
+| Tool | Description |
+|------|-------------|
+| `search_pages` | Search via CQL or free-text query |
+| `get_page` | Get full page content (markdown + metadata) by URL |
+| `list_recent_pages` | Pages recently modified by you |
+| `list_spaces` | All accessible spaces |
+| `list_children` | Direct child pages of a page |
+| `create_page` | Create a new page with markdown content |
+| `edit_page` | Replace a page's full content |
+| `add_content_to_page` | Append or prepend content to a page |
+
+Pages are also accessible as MCP resources via `confluence://page/{page_id}`.
+
+---
+
 ## Requirements
 
 - Python 3.10+
