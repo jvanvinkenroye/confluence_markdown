@@ -95,7 +95,16 @@ def search_pages(
     query: str | None = None,
     limit: int = 10,
 ) -> str:
-    """Search Confluence pages. Provide either a CQL expression or a free-text query."""
+    """Search Confluence pages.
+
+    Provide either a CQL expression (cql) or a plain free-text query (query), but not both.
+
+    Examples:
+      cql="space = DEV AND label = important"
+      query="kubernetes deployment guide"
+
+    Returns a JSON array of matching pages with id, title, space, url, and a short excerpt.
+    """
     if not cql and not query:
         raise ValueError("Provide either 'cql' (CQL expression) or 'query' (free-text search).")
     client = _get_client()
@@ -111,7 +120,15 @@ def search_pages(
 
 @mcp.tool()
 def get_page(page_url: str) -> str:
-    """Get full page content (metadata + markdown body) for a Confluence page URL."""
+    """Get the full content of a Confluence page by its URL.
+
+    Accepts any Confluence page URL, e.g.
+      https://wiki.example.com/pages/viewpage.action?pageId=12345
+      https://wiki.example.com/display/SPACE/Page+Title
+
+    Returns a JSON object with: id, title, space, version, url, and the page body
+    converted to markdown.
+    """
     client = _get_client()
     try:
         result = client.read_page_content(page_url)
@@ -122,7 +139,11 @@ def get_page(page_url: str) -> str:
 
 @mcp.tool()
 def list_recent_pages(limit: int = 10) -> str:
-    """List pages recently modified by the authenticated user."""
+    """List Confluence pages recently modified by the authenticated user.
+
+    Returns up to `limit` pages (max 50), sorted by last-modified date descending.
+    Each entry includes id, title, space, url, and last-modified timestamp.
+    """
     client = _get_client()
     limit = max(1, min(limit, 50))
     try:
@@ -134,7 +155,11 @@ def list_recent_pages(limit: int = 10) -> str:
 
 @mcp.tool()
 def list_spaces(limit: int = 50) -> str:
-    """List all global Confluence spaces accessible by the authenticated user."""
+    """List all Confluence spaces accessible by the authenticated user.
+
+    Returns up to `limit` spaces (max 50). Each entry includes key, name, type, and url.
+    Use the space key (e.g. "DEV", "DOCS") when creating pages with create_page.
+    """
     client = _get_client()
     try:
         results = client.list_spaces(limit)
@@ -145,7 +170,11 @@ def list_spaces(limit: int = 50) -> str:
 
 @mcp.tool()
 def list_children(page_url: str, limit: int = 50) -> str:
-    """List direct child pages of a given Confluence page."""
+    """List the direct child pages of a Confluence page.
+
+    Returns up to `limit` children (max 200). Each entry includes id, title, and url.
+    Useful for navigating page hierarchies before reading or editing a specific child.
+    """
     client = _get_client()
     limit = max(1, min(limit, 200))
     try:
@@ -165,7 +194,17 @@ def create_page(
     content: str,
     parent_id: str | None = None,
 ) -> str:
-    """Create a new Confluence page with markdown content."""
+    """Create a new Confluence page with markdown content.
+
+    Args:
+        space_key: Key of the target space (e.g. "DEV", "DOCS"). Use list_spaces to find it.
+        title: Page title (must be unique within the space).
+        content: Page body in markdown format.
+        parent_id: Optional numeric ID of the parent page. When omitted the page is created
+                   at the space root. Use list_children or get_page to find parent IDs.
+
+    Returns a JSON object with the new page's id, title, and url.
+    """
     client = _get_client()
     with _silence_stdout():
         try:
@@ -188,7 +227,13 @@ def create_page(
 
 @mcp.tool()
 def edit_page(page_url: str, content: str) -> str:
-    """Replace the full body of a Confluence page with new markdown content."""
+    """Replace the full body of a Confluence page with new markdown content.
+
+    The existing page content is completely overwritten. Use add_content_to_page
+    if you only want to append or prepend without discarding the current body.
+
+    Returns a JSON object with the page's id, title, new version number, and url.
+    """
     client = _get_client()
     with _silence_stdout():
         try:
@@ -212,7 +257,15 @@ def add_content_to_page(
     content: str,
     append: bool = True,
 ) -> str:
-    """Append or prepend markdown content to an existing Confluence page."""
+    """Add markdown content to an existing Confluence page without replacing it.
+
+    Args:
+        page_url: URL of the page to update.
+        content: Markdown content to add.
+        append: True (default) to add after existing content; False to prepend before it.
+
+    Returns a JSON object with the page's id, title, and new version number.
+    """
     client = _get_client()
     try:
         result = client.add_content_to_page(
@@ -232,7 +285,11 @@ def add_content_to_page(
 
 @mcp.resource("confluence://page/{page_id}")
 def page_resource(page_id: str) -> str:
-    """Expose a Confluence page as a readable MCP resource (returns markdown)."""
+    """Return a Confluence page as a markdown MCP resource.
+
+    Access via URI: confluence://page/{page_id}
+    The page body is converted from Confluence storage format to markdown.
+    """
     client = _get_client()
     try:
         data = client.get_page_content(page_id)

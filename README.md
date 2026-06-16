@@ -384,7 +384,7 @@ Edit `~/Library/Application Support/Claude/claude_desktop_config.json`:
 }
 ```
 
-The server reuses your saved config profile automatically (same credentials as the CLI). If you haven't saved credentials yet, run `confluence-markdown --save-config` first, or pass env vars:
+The server reuses your saved config profile automatically (same credentials as the CLI). If you haven't saved credentials yet, run `confluence-markdown --save-config` first, or pass credentials via environment variables:
 
 ```json
 {
@@ -401,6 +401,8 @@ The server reuses your saved config profile automatically (same credentials as t
 }
 ```
 
+Restart Claude Desktop after editing the config file.
+
 ### Available MCP tools
 
 | Tool | Description |
@@ -416,12 +418,28 @@ The server reuses your saved config profile automatically (same credentials as t
 
 Pages are also accessible as MCP resources via `confluence://page/{page_id}`.
 
+### MCP Troubleshooting
+
+**Tools time out in Claude Desktop** — The MCP server process is started once per Claude Desktop session and does not auto-restart after long idle periods. If tool calls fail or time out, restart Claude Desktop to re-establish the connection.
+
+**Server fails to start** — Check that the `mcp` extra is installed and credentials are configured:
+
+```bash
+# Verify the binary works
+confluence-markdown-mcp  # should block waiting for stdin (Ctrl-C to exit)
+
+# Verify credentials
+confluence-markdown --action test-auth
+```
+
+**`create_page` or `edit_page` returns no output** — These operations print progress to stdout, which would corrupt the MCP JSON-RPC channel. The server automatically redirects such output to stderr so it only appears in `~/Library/Logs/Claude/mcp-server-confluence.log`.
+
 ---
 
 ## Requirements
 
 - Python 3.10+
-- httpx (async HTTP)
+- httpx
 - requests
 - markdownify
 - beautifulsoup4
@@ -431,9 +449,11 @@ Pages are also accessible as MCP resources via `confluence://page/{page_id}`.
 - argcomplete
 - pyyaml
 - markdown
+- keyring (credential storage)
 
 Optional:
 - fzf (for fuzzy page selection)
+- mcp (for MCP server support — `uv pip install -e ".[mcp]"`)
 
 ## Troubleshooting
 
