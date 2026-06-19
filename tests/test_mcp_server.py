@@ -7,12 +7,15 @@ level singleton `_client` is also reset between tests to avoid state leakage.
 
 from __future__ import annotations
 
+import asyncio
 import json
-from unittest.mock import MagicMock, patch
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
 import confluence_markdown.mcp_server as mcp_mod
+from mcp.server.elicitation import AcceptedElicitation
+from confluence_markdown.mcp_server import WriteConfirmation
 
 
 # ---------------------------------------------------------------------------
@@ -46,6 +49,16 @@ def _make_client(**overrides) -> MagicMock:
 def _patch_client(mock: MagicMock):
     """Context manager: patch _get_client and reset the module singleton."""
     return patch.object(mcp_mod, "_get_client", return_value=mock)
+
+
+def _make_ctx(confirm: bool = True, remember: bool = False, supports_elicitation: bool = True) -> MagicMock:
+    """Return a mock Context whose elicit() returns an AcceptedElicitation."""
+    ctx = MagicMock()
+    ctx.session.check_client_capability.return_value = supports_elicitation
+    ctx.elicit = AsyncMock(
+        return_value=AcceptedElicitation(data=WriteConfirmation(confirm=confirm, remember=remember))
+    )
+    return ctx
 
 
 @pytest.fixture(autouse=True)
@@ -194,13 +207,15 @@ class TestListChildren:
 class TestCreatePage:
     def test_creates_page_and_returns_url(self):
         mock = _make_client()
+        ctx = _make_ctx()
         with _patch_client(mock):
-            result = mcp_mod.create_page(
+            result = asyncio.run(mcp_mod.create_page(
                 space_key="DEV",
                 title="New Page",
                 content="# Hello",
+                ctx=ctx,
                 parent_id=None,
-            )
+            ))
         mock.create_page.assert_called_once_with(
             space_key="DEV",
             title="New Page",
@@ -216,16 +231,20 @@ class TestCreatePage:
         from confluence_markdown.exceptions import ConfluenceError
         mock = _make_client()
         mock.create_page.side_effect = ConfluenceError("space not found")
+        ctx = _make_ctx()
         with _patch_client(mock):
             with pytest.raises(RuntimeError, match="space not found"):
-                mcp_mod.create_page("MISSING", "Title", "body")
+                asyncio.run(mcp_mod.create_page("MISSING", "Title", "body", ctx=ctx))
 
 
 class TestEditPage:
     def test_edits_page_and_returns_metadata(self):
         mock = _make_client()
+        ctx = _make_ctx()
         with _patch_client(mock):
-            result = mcp_mod.edit_page("https://confluence.example.com/a", "# Updated")
+            result = asyncio.run(
+                mcp_mod.edit_page("https://confluence.example.com/a", "# Updated", ctx=ctx)
+            )
         mock.edit_page_with_editor.assert_called_once_with(
             "https://confluence.example.com/a",
             content="# Updated",
@@ -238,18 +257,20 @@ class TestEditPage:
         from confluence_markdown.exceptions import ConfluenceError
         mock = _make_client()
         mock.edit_page_with_editor.side_effect = ConfluenceError("conflict")
+        ctx = _make_ctx()
         with _patch_client(mock):
             with pytest.raises(RuntimeError, match="conflict"):
-                mcp_mod.edit_page("https://confluence.example.com/a", "body")
+                asyncio.run(mcp_mod.edit_page("https://confluence.example.com/a", "body", ctx=ctx))
 
 
 class TestAddContentToPage:
     def test_appends_content(self):
         mock = _make_client()
+        ctx = _make_ctx()
         with _patch_client(mock):
-            result = mcp_mod.add_content_to_page(
-                "https://confluence.example.com/a", "## New section", append=True
-            )
+            result = asyncio.run(mcp_mod.add_content_to_page(
+                "https://confluence.example.com/a", "## New section", ctx=ctx, append=True
+            ))
         mock.add_content_to_page.assert_called_once_with(
             "https://confluence.example.com/a",
             "## New section",
@@ -261,10 +282,11 @@ class TestAddContentToPage:
 
     def test_prepends_content(self):
         mock = _make_client()
+        ctx = _make_ctx()
         with _patch_client(mock):
-            mcp_mod.add_content_to_page(
-                "https://confluence.example.com/a", "## Intro", append=False
-            )
+            asyncio.run(mcp_mod.add_content_to_page(
+                "https://confluence.example.com/a", "## Intro", ctx=ctx, append=False
+            ))
         mock.add_content_to_page.assert_called_once_with(
             "https://confluence.example.com/a",
             "## Intro",
@@ -276,9 +298,12 @@ class TestAddContentToPage:
         from confluence_markdown.exceptions import ConfluenceError
         mock = _make_client()
         mock.add_content_to_page.side_effect = ConfluenceError("page locked")
+        ctx = _make_ctx()
         with _patch_client(mock):
             with pytest.raises(RuntimeError, match="page locked"):
-                mcp_mod.add_content_to_page("https://confluence.example.com/a", "body")
+                asyncio.run(mcp_mod.add_content_to_page(
+                    "https://confluence.example.com/a", "body", ctx=ctx
+                ))
 
 
 # ---------------------------------------------------------------------------

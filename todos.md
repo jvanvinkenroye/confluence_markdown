@@ -6,6 +6,7 @@
 - [ ] Tests: Keyring-Fallback-Pfad
 
 ## Completed
+- [x] Feat: Human-in-the-Loop-Bestätigung für Schreib-Tools via MCP-Elicitation (`create_page`, `edit_page`, `add_content_to_page`); Fail-Safe bei fehlendem Elicitation-Support; Session-Flag `_writes_confirmed_session` für "Merken"-Option (mcp_server.py) | Completed: 06-19-2026
 - [x] Fix: Keyring-Fallback mit expliziter Warnung statt silent Plaintext (config.py:81-85) | Completed: 05-17-2026
 - [x] Fix: print() → logger.error() in client.py (alle Stellen) | Completed: 05-17-2026
 - [x] Fix: Auth-Header-Redaction vervollständigen (client.py:1547) | Completed: 05-17-2026

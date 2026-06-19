@@ -418,6 +418,21 @@ Restart Claude Desktop after editing the config file.
 
 Pages are also accessible as MCP resources via `confluence://page/{page_id}`.
 
+### Write protection (human-in-the-loop)
+
+When the MCP client supports
+[elicitation](https://modelcontextprotocol.io/docs/concepts/elicitation),
+`create_page`, `edit_page`, and `add_content_to_page` prompt for explicit
+confirmation before executing. Clients that do not support elicitation
+(automated agents, older clients) proceed without the prompt.
+
+The confirmation form has two fields:
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `confirm` | bool | `true` to proceed, `false` to abort |
+| `remember` | bool | `true` to skip confirmation for the rest of the session |
+
 ### MCP Troubleshooting
 
 **Tools time out in Claude Desktop** — The MCP server process is started once per Claude Desktop session and does not auto-restart after long idle periods. If tool calls fail or time out, restart Claude Desktop to re-establish the connection.
