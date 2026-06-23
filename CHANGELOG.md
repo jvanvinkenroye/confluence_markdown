@@ -24,6 +24,10 @@ See the [Confluence storage format documentation](https://confluence.atlassian.c
 
 All storage write tools preserve the human-in-the-loop elicitation confirmation.
 
+**New diagnostic tool:** `check_elicitation_support` — returns
+`{"elicitation_supported": true/false}` so you can verify at runtime
+whether the connected MCP client will trigger the write confirmation prompt.
+
 The MCP server `instructions` now steer agents toward the `*_storage` tools as
 the preferred choice for content operations.
 

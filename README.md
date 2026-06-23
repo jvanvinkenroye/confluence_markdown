@@ -482,6 +482,12 @@ The server exposes two content tool families (see [Page formats](#page-formats-m
 | `create_page_md` | Create a page with Markdown content |
 | `add_content_md` | Append/prepend Markdown content to a page |
 
+**Diagnostic:**
+
+| Tool | Description |
+|------|-------------|
+| `check_elicitation_support` | Returns `{"elicitation_supported": true/false}` — verify whether human-in-the-loop confirmation for write tools will be triggered |
+
 Pages are also accessible as MCP resources:
 - `confluence://page/{page_id}` — Markdown
 - `confluence://page/{page_id}/storage` — Confluence storage format (XHTML)

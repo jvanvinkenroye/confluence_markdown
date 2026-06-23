@@ -171,6 +171,23 @@ def _ok(data: Any) -> str:
     return json.dumps(data, ensure_ascii=False, indent=2)
 
 
+# ── Diagnostic ───────────────────────────────────────────────────────────────
+
+
+@mcp.tool(annotations=ToolAnnotations(readOnlyHint=True, destructiveHint=False))
+async def check_elicitation_support(ctx: Context) -> str:
+    """Return whether the connected MCP client supports elicitation.
+
+    Use this to verify that human-in-the-loop confirmation for write tools
+    will be triggered. If elicitation_supported is false, write tools proceed
+    without prompting.
+    """
+    supported = ctx.session.check_client_capability(
+        ClientCapabilities(elicitation=ElicitationCapability())
+    )
+    return _ok({"elicitation_supported": supported})
+
+
 # ── Navigation / search tools (no format dimension) ───────────────────────────
 
 
