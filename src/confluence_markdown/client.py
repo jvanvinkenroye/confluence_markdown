@@ -441,28 +441,45 @@ class ConfluenceClient:
             for s in results
         ]
 
-    def download_as_markdown(
-        self, page_url: str, output_file: Optional[str] = None
+    def download_page(
+        self,
+        page_url: str,
+        output_file: Optional[str] = None,
+        fmt: str = "md",
     ) -> str:
-        """
-        Download page content and convert to markdown.
+        """Download a page in the requested format.
 
         Args:
-            page_url: Full URL to the Confluence page
-            output_file: Optional file path to save markdown
+            page_url: Full URL to the Confluence page.
+            output_file: Optional file path to save the output.
+            fmt: ``"md"`` (default) for Markdown, or ``"storage"`` for
+                 Confluence storage format (XHTML), Atlassian's official
+                 native page format (``representation: "storage"`` in the
+                 REST API).
 
         Returns:
-            Markdown content as string
+            Page content as a string (Markdown or storage XHTML).
         """
         page_data = self.get_page_by_url(page_url)
+        storage_value = page_data["body"]["storage"]["value"]
 
-        # Extract HTML content
-        html_content = page_data["body"]["storage"]["value"]
+        if fmt == "storage":
+            # Lossless passthrough: pretty-print storage XHTML for human editing.
+            pretty = self._prettify_storage(storage_value)
+            header = (
+                f"<!-- Page ID: {page_data['id']}, "
+                f"Version: {page_data['version']['number']}, "
+                f"Title: {page_data['title']} -->\n"
+            )
+            full_content = header + pretty
+            if output_file:
+                with open(output_file, "w", encoding="utf-8") as f:
+                    f.write(full_content)
+                print(f"Storage XHTML saved to: {output_file}")
+            return full_content
 
-        # Convert HTML to Markdown
-        markdown_content = self._html_to_markdown(html_content)
-
-        # Add metadata header
+        # Default: Markdown
+        markdown_content = self._html_to_markdown(storage_value)
         safe_title = self._escape_markdown_heading(page_data["title"])
         metadata = f"""# {safe_title}
 
@@ -474,10 +491,8 @@ class ConfluenceClient:
 ---
 
 """
-
         full_markdown = metadata + markdown_content
 
-        # Save to file if specified
         if output_file:
             with open(output_file, "w", encoding="utf-8") as f:
                 f.write(full_markdown)
@@ -1818,6 +1833,108 @@ More content...
         pattern = r"<!-- CONFLUENCE_MACROS_START\n(.*?)\nCONFLUENCE_MACROS_END -->\n?"
         return re.sub(pattern, "", content, flags=re.DOTALL)
 
+    # ── Confluence storage format (XHTML) helpers ─────────────────────────────
+
+    # Void HTML elements that must be self-closing in XML/XHTML
+    _VOID_ELEMENTS = frozenset(
+        ["br", "hr", "img", "input", "link", "meta", "area", "base",
+         "col", "embed", "param", "source", "track", "wbr"]
+    )
+
+    # Elements where internal whitespace is semantically significant
+    _PRESERVE_WS_TAGS = ("ac:plain-text-body", "ac:plain-text-link-body", "pre")
+
+    # Namespace declarations common in Confluence storage format
+    _STORAGE_NS = (
+        'xmlns:ac="http://atlassian.com/content/ac" '
+        'xmlns:ri="http://atlassian.com/content/ri" '
+        'xmlns:at="http://atlassian.com/content/at"'
+    )
+
+    def _validate_storage_xhtml(self, html: str) -> tuple[bool, str | None]:
+        """Validate Confluence storage format XHTML for well-formedness.
+
+        Normalizes ``<br>`` → ``<br/>`` and void elements before checking.
+        Returns ``(True, None)`` on success or ``(False, error_message)`` on
+        failure. Call this before every PUT/POST in storage mode so malformed
+        input fails locally with a clear message instead of an opaque HTTP 400.
+        """
+        import xml.etree.ElementTree as ET
+
+        # Step 1: normalize void elements to be self-closing
+        content = html
+        for tag in self._VOID_ELEMENTS:
+            # Match <tag> or <tag attrs> NOT already self-closed and NOT followed
+            # by </tag> (i.e. the element is empty and must be self-closed).
+            content = re.sub(
+                rf'<({re.escape(tag)})(\s[^>]*)?(?<!/)>',
+                r'<\1\2/>',
+                content,
+                flags=re.IGNORECASE,
+            )
+
+        # Step 2: detect bare & not part of a valid XML entity or char ref
+        bare_amp = re.search(
+            r'&(?!(?:#\d+|#x[0-9a-fA-F]+|[a-zA-Z][a-zA-Z0-9]*);)',
+            content,
+        )
+        if bare_amp:
+            pos = bare_amp.start()
+            ctx = content[max(0, pos - 20): pos + 40]
+            return (
+                False,
+                f"Unescaped '&' found near: …{ctx!r}… — replace with '&amp;'.",
+            )
+
+        # Step 3: try parsing as XML with known Confluence namespace declarations
+        wrapped = f'<_root {self._STORAGE_NS}>{content}</_root>'
+        try:
+            ET.fromstring(wrapped)
+        except ET.ParseError as exc:
+            return (
+                False,
+                f"Storage XHTML is not well-formed: {exc}. "
+                "Check for unclosed tags, mismatched elements, or invalid characters.",
+            )
+
+        return True, None
+
+    def _prettify_storage(self, html: str) -> str:
+        """Pretty-print Confluence storage format XHTML for human editing.
+
+        Preserves significant whitespace inside ``<pre>``,
+        ``<ac:plain-text-body>``, and ``<ac:plain-text-link-body>`` elements
+        so that code block content is not indented by the prettifier.
+        Confluence re-normalizes storage on save, so this is cosmetic only.
+        """
+        import uuid
+
+        preserved: dict[str, str] = {}
+        content = html
+
+        for tag in self._PRESERVE_WS_TAGS:
+            pattern = re.compile(
+                rf'(<{re.escape(tag)}(?:\s[^>]*)?>)(.*?)(</{re.escape(tag)}>)',
+                re.DOTALL | re.IGNORECASE,
+            )
+
+            def _replacer(m: re.Match, _tag: str = tag) -> str:
+                key = f"__PRESERVE_{uuid.uuid4().hex}__"
+                preserved[key] = m.group(0)
+                return key
+
+            content = pattern.sub(_replacer, content)
+
+        soup = BeautifulSoup(content, "html.parser")
+        pretty = soup.prettify()
+
+        for key, original in preserved.items():
+            pretty = pretty.replace(key, original)
+
+        return pretty
+
+    # ── End storage helpers ────────────────────────────────────────────────────
+
     def _markdown_to_html(self, markdown_content: str) -> str:
         """Convert markdown to HTML using proper markdown parser."""
         # Use markdown library with table support and HTML passthrough
@@ -1877,11 +1994,37 @@ More content...
 
         try:
             if content is not None:
-                # Non-interactive mode: write provided content directly to temp file
+                # Non-interactive mode: write provided content directly.
                 self._debug("Non-interactive edit: using provided content")
-                if content_type == "html":
-                    new_markdown, _ = self._html_to_markdown_with_macros(content)
-                    write_content = new_markdown
+                if content_type in ("html", "storage"):
+                    # Storage XHTML passthrough: validate then PUT directly,
+                    # bypassing the markdown pipeline entirely.  This fixes the
+                    # former html→markdown→html round-trip that was lossy for
+                    # tables and macros.
+                    ok, err = self._validate_storage_xhtml(content)
+                    if not ok:
+                        raise ValueError(
+                            f"Invalid Confluence storage format XHTML: {err}"
+                        )
+                    self._debug("Storage passthrough validated; uploading directly")
+                    update_data = {
+                        "version": {"number": page_data["version"]["number"] + 1},
+                        "title": page_data["title"],
+                        "type": "page",
+                        "body": {
+                            "storage": {"value": content, "representation": "storage"}
+                        },
+                    }
+                    url = f"{self.api_base}/content/{page_data['id']}"
+                    response = self._request("PUT", url, json=update_data)
+                    self._debug(f"Storage PUT response: {response.status_code}")
+                    if response.status_code == 409:
+                        raise RuntimeError(
+                            "Confluence rejected the update due to a version conflict. "
+                            "Refresh the page and try again."
+                        )
+                    response.raise_for_status()
+                    return response.json()
                 else:
                     write_content = content
                 with open(temp_file_path, "w") as f:

@@ -2,7 +2,8 @@
 
 Strategy: patch `confluence_markdown.mcp_server._get_client` so every tool
 function receives a MagicMock instead of a real ConfluenceClient.  The module-
-level singleton `_client` is also reset between tests to avoid state leakage.
+level singletons (_client, _writes_confirmed_session) are also reset between
+tests to avoid state leakage.
 """
 
 from __future__ import annotations
@@ -29,7 +30,16 @@ def _make_client(**overrides) -> MagicMock:
     mock.base_url = "https://confluence.example.com"
     mock._build_text_search_cql.return_value = 'text ~ "hello"'
     mock.search_pages.return_value = [{"id": "1", "title": "Page A", "url": "https://confluence.example.com/a"}]
-    mock.read_page_content.return_value = {"id": "1", "title": "Page A", "markdown": "# Hello"}
+    mock.read_page_content.return_value = {
+        "id": "1",
+        "title": "Page A",
+        "space": "Dev",
+        "space_key": "DEV",
+        "version": 1,
+        "url": "https://confluence.example.com/a",
+        "html_content": "<p>Hello</p>",
+        "markdown_content": "Hello",
+    }
     mock.list_recent_pages.return_value = [{"id": "2", "title": "Recent", "url": "https://confluence.example.com/r"}]
     mock.list_spaces.return_value = [{"key": "DEV", "name": "Development"}]
     mock.list_children.return_value = [{"id": "3", "title": "Child", "url": "https://confluence.example.com/c"}]
@@ -41,6 +51,8 @@ def _make_client(**overrides) -> MagicMock:
         "body": {"storage": {"value": "<p>Hello</p>"}},
     }
     mock._html_to_markdown.return_value = "Hello"
+    mock._prettify_storage.return_value = "<p>Hello</p>"
+    mock._validate_storage_xhtml.return_value = (True, None)
     for key, value in overrides.items():
         setattr(mock, key, value)
     return mock
@@ -63,10 +75,12 @@ def _make_ctx(confirm: bool = True, remember: bool = False, supports_elicitation
 
 @pytest.fixture(autouse=True)
 def reset_singleton():
-    """Reset the module-level _client singleton before each test."""
+    """Reset module-level singletons before each test."""
     mcp_mod._client = None
+    mcp_mod._writes_confirmed_session = False
     yield
     mcp_mod._client = None
+    mcp_mod._writes_confirmed_session = False
 
 
 # ---------------------------------------------------------------------------
@@ -78,24 +92,33 @@ class TestToolRegistration:
     """Verify that all expected tools are registered on the FastMCP instance."""
 
     def _tool_names(self) -> set[str]:
-        import asyncio
         tools = asyncio.run(mcp_mod.mcp.list_tools())
         return {t.name for t in tools}
 
-    def test_read_tools_registered(self):
+    def test_navigation_tools_registered(self):
         names = self._tool_names()
-        for tool in ("search_pages", "get_page", "list_recent_pages", "list_spaces", "list_children"):
-            assert tool in names, f"Expected read tool '{tool}' to be registered"
+        for tool in ("search_pages", "list_recent_pages", "list_spaces", "list_children"):
+            assert tool in names, f"Expected navigation tool '{tool}' to be registered"
 
-    def test_write_tools_registered(self):
-        """Write tools are always registered (gating is runtime, not registration-time)."""
+    def test_md_tools_registered(self):
         names = self._tool_names()
-        for tool in ("create_page", "edit_page", "add_content_to_page"):
-            assert tool in names, f"Expected write tool '{tool}' to be registered"
+        for tool in ("get_page_md", "create_page_md", "edit_page_md", "add_content_md"):
+            assert tool in names, f"Expected *_md tool '{tool}' to be registered"
+
+    def test_storage_tools_registered(self):
+        names = self._tool_names()
+        for tool in ("get_page_storage", "create_page_storage", "edit_page_storage", "add_content_storage"):
+            assert tool in names, f"Expected *_storage tool '{tool}' to be registered"
+
+    def test_old_tool_names_not_present(self):
+        """Ensure the pre-rename tool names are gone (breaking-change clean cut)."""
+        names = self._tool_names()
+        for old in ("get_page", "create_page", "edit_page", "add_content_to_page"):
+            assert old not in names, f"Old tool name '{old}' should have been removed"
 
 
 # ---------------------------------------------------------------------------
-# Read tools
+# Navigation / search tools
 # ---------------------------------------------------------------------------
 
 
@@ -136,24 +159,6 @@ class TestSearchPages:
         with _patch_client(mock):
             with pytest.raises(RuntimeError, match="boom"):
                 mcp_mod.search_pages(cql="type = page")
-
-
-class TestGetPage:
-    def test_returns_json(self):
-        mock = _make_client()
-        with _patch_client(mock):
-            result = mcp_mod.get_page("https://confluence.example.com/a")
-        mock.read_page_content.assert_called_once_with("https://confluence.example.com/a")
-        data = json.loads(result)
-        assert data["title"] == "Page A"
-
-    def test_confluence_error_raises_runtime(self):
-        from confluence_markdown.exceptions import ConfluenceError
-        mock = _make_client()
-        mock.read_page_content.side_effect = ConfluenceError("not found")
-        with _patch_client(mock):
-            with pytest.raises(RuntimeError, match="not found"):
-                mcp_mod.get_page("https://confluence.example.com/missing")
 
 
 class TestListRecentPages:
@@ -200,16 +205,34 @@ class TestListChildren:
 
 
 # ---------------------------------------------------------------------------
-# Write tools
+# *_md tools
 # ---------------------------------------------------------------------------
 
 
-class TestCreatePage:
+class TestGetPageMd:
+    def test_returns_json(self):
+        mock = _make_client()
+        with _patch_client(mock):
+            result = mcp_mod.get_page_md("https://confluence.example.com/a")
+        mock.read_page_content.assert_called_once_with("https://confluence.example.com/a")
+        data = json.loads(result)
+        assert data["title"] == "Page A"
+
+    def test_confluence_error_raises_runtime(self):
+        from confluence_markdown.exceptions import ConfluenceError
+        mock = _make_client()
+        mock.read_page_content.side_effect = ConfluenceError("not found")
+        with _patch_client(mock):
+            with pytest.raises(RuntimeError, match="not found"):
+                mcp_mod.get_page_md("https://confluence.example.com/missing")
+
+
+class TestCreatePageMd:
     def test_creates_page_and_returns_url(self):
         mock = _make_client()
         ctx = _make_ctx()
         with _patch_client(mock):
-            result = asyncio.run(mcp_mod.create_page(
+            result = asyncio.run(mcp_mod.create_page_md(
                 space_key="DEV",
                 title="New Page",
                 content="# Hello",
@@ -234,16 +257,16 @@ class TestCreatePage:
         ctx = _make_ctx()
         with _patch_client(mock):
             with pytest.raises(RuntimeError, match="space not found"):
-                asyncio.run(mcp_mod.create_page("MISSING", "Title", "body", ctx=ctx))
+                asyncio.run(mcp_mod.create_page_md("MISSING", "Title", "body", ctx=ctx))
 
 
-class TestEditPage:
+class TestEditPageMd:
     def test_edits_page_and_returns_metadata(self):
         mock = _make_client()
         ctx = _make_ctx()
         with _patch_client(mock):
             result = asyncio.run(
-                mcp_mod.edit_page("https://confluence.example.com/a", "# Updated", ctx=ctx)
+                mcp_mod.edit_page_md("https://confluence.example.com/a", "# Updated", ctx=ctx)
             )
         mock.edit_page_with_editor.assert_called_once_with(
             "https://confluence.example.com/a",
@@ -260,15 +283,15 @@ class TestEditPage:
         ctx = _make_ctx()
         with _patch_client(mock):
             with pytest.raises(RuntimeError, match="conflict"):
-                asyncio.run(mcp_mod.edit_page("https://confluence.example.com/a", "body", ctx=ctx))
+                asyncio.run(mcp_mod.edit_page_md("https://confluence.example.com/a", "body", ctx=ctx))
 
 
-class TestAddContentToPage:
+class TestAddContentMd:
     def test_appends_content(self):
         mock = _make_client()
         ctx = _make_ctx()
         with _patch_client(mock):
-            result = asyncio.run(mcp_mod.add_content_to_page(
+            result = asyncio.run(mcp_mod.add_content_md(
                 "https://confluence.example.com/a", "## New section", ctx=ctx, append=True
             ))
         mock.add_content_to_page.assert_called_once_with(
@@ -284,7 +307,7 @@ class TestAddContentToPage:
         mock = _make_client()
         ctx = _make_ctx()
         with _patch_client(mock):
-            asyncio.run(mcp_mod.add_content_to_page(
+            asyncio.run(mcp_mod.add_content_md(
                 "https://confluence.example.com/a", "## Intro", ctx=ctx, append=False
             ))
         mock.add_content_to_page.assert_called_once_with(
@@ -301,13 +324,164 @@ class TestAddContentToPage:
         ctx = _make_ctx()
         with _patch_client(mock):
             with pytest.raises(RuntimeError, match="page locked"):
-                asyncio.run(mcp_mod.add_content_to_page(
+                asyncio.run(mcp_mod.add_content_md(
                     "https://confluence.example.com/a", "body", ctx=ctx
                 ))
 
 
 # ---------------------------------------------------------------------------
-# MCP Resource
+# *_storage tools
+# ---------------------------------------------------------------------------
+
+
+class TestGetPageStorage:
+    def test_returns_storage_content(self):
+        mock = _make_client()
+        with _patch_client(mock):
+            result = mcp_mod.get_page_storage("https://confluence.example.com/a")
+        mock.read_page_content.assert_called_once_with("https://confluence.example.com/a")
+        mock._prettify_storage.assert_called_once_with("<p>Hello</p>")
+        data = json.loads(result)
+        assert data["title"] == "Page A"
+        assert "storage_content" in data
+        assert "markdown_content" not in data  # storage tool does not return markdown
+
+    def test_confluence_error_raises_runtime(self):
+        from confluence_markdown.exceptions import ConfluenceError
+        mock = _make_client()
+        mock.read_page_content.side_effect = ConfluenceError("not found")
+        with _patch_client(mock):
+            with pytest.raises(RuntimeError, match="not found"):
+                mcp_mod.get_page_storage("https://confluence.example.com/missing")
+
+
+class TestCreatePageStorage:
+    def test_creates_page_with_storage_content(self):
+        mock = _make_client()
+        ctx = _make_ctx()
+        xhtml = "<p>Hello <strong>world</strong></p>"
+        with _patch_client(mock):
+            result = asyncio.run(mcp_mod.create_page_storage(
+                space_key="DEV",
+                title="New Page",
+                content=xhtml,
+                ctx=ctx,
+            ))
+        mock._validate_storage_xhtml.assert_called_once_with(xhtml)
+        mock.create_page.assert_called_once_with(
+            space_key="DEV",
+            title="New Page",
+            content=xhtml,
+            parent_id=None,
+            content_type="html",
+        )
+        data = json.loads(result)
+        assert data["id"] == "42"
+        assert "42" in data["url"]
+
+    def test_invalid_xhtml_raises_value_error(self):
+        mock = _make_client()
+        mock._validate_storage_xhtml.return_value = (False, "unclosed tag <p>")
+        ctx = _make_ctx()
+        with _patch_client(mock):
+            with pytest.raises(ValueError, match="unclosed tag"):
+                asyncio.run(mcp_mod.create_page_storage(
+                    "DEV", "Title", "<p>broken", ctx=ctx
+                ))
+
+    def test_confluence_error_raises_runtime(self):
+        from confluence_markdown.exceptions import ConfluenceError
+        mock = _make_client()
+        mock.create_page.side_effect = ConfluenceError("space not found")
+        ctx = _make_ctx()
+        with _patch_client(mock):
+            with pytest.raises(RuntimeError, match="space not found"):
+                asyncio.run(mcp_mod.create_page_storage("MISSING", "Title", "<p/>", ctx=ctx))
+
+
+class TestEditPageStorage:
+    def test_edits_page_with_storage_content(self):
+        mock = _make_client()
+        ctx = _make_ctx()
+        xhtml = "<p>Updated <strong>content</strong></p>"
+        with _patch_client(mock):
+            result = asyncio.run(
+                mcp_mod.edit_page_storage("https://confluence.example.com/a", xhtml, ctx=ctx)
+            )
+        mock._validate_storage_xhtml.assert_called_once_with(xhtml)
+        mock.edit_page_with_editor.assert_called_once_with(
+            "https://confluence.example.com/a",
+            content=xhtml,
+            content_type="storage",
+        )
+        data = json.loads(result)
+        assert data["version"] == 2
+
+    def test_invalid_xhtml_raises_value_error(self):
+        mock = _make_client()
+        mock._validate_storage_xhtml.return_value = (False, "bare & detected")
+        ctx = _make_ctx()
+        with _patch_client(mock):
+            with pytest.raises(ValueError, match="bare &"):
+                asyncio.run(
+                    mcp_mod.edit_page_storage("https://confluence.example.com/a", "bad & content", ctx=ctx)
+                )
+
+    def test_confluence_error_raises_runtime(self):
+        from confluence_markdown.exceptions import ConfluenceError
+        mock = _make_client()
+        mock.edit_page_with_editor.side_effect = ConfluenceError("conflict")
+        ctx = _make_ctx()
+        with _patch_client(mock):
+            with pytest.raises(RuntimeError, match="conflict"):
+                asyncio.run(
+                    mcp_mod.edit_page_storage("https://confluence.example.com/a", "<p/>", ctx=ctx)
+                )
+
+
+class TestAddContentStorage:
+    def test_appends_storage_content(self):
+        mock = _make_client()
+        ctx = _make_ctx()
+        xhtml = "<p>Appended</p>"
+        with _patch_client(mock):
+            result = asyncio.run(mcp_mod.add_content_storage(
+                "https://confluence.example.com/a", xhtml, ctx=ctx, append=True
+            ))
+        mock._validate_storage_xhtml.assert_called_once_with(xhtml)
+        mock.add_content_to_page.assert_called_once_with(
+            "https://confluence.example.com/a",
+            xhtml,
+            append=True,
+            content_type="html",
+        )
+        data = json.loads(result)
+        assert data["version"] == 3
+
+    def test_invalid_xhtml_raises_value_error(self):
+        mock = _make_client()
+        mock._validate_storage_xhtml.return_value = (False, "unclosed tag")
+        ctx = _make_ctx()
+        with _patch_client(mock):
+            with pytest.raises(ValueError, match="unclosed tag"):
+                asyncio.run(mcp_mod.add_content_storage(
+                    "https://confluence.example.com/a", "<p>broken", ctx=ctx
+                ))
+
+    def test_confluence_error_raises_runtime(self):
+        from confluence_markdown.exceptions import ConfluenceError
+        mock = _make_client()
+        mock.add_content_to_page.side_effect = ConfluenceError("page locked")
+        ctx = _make_ctx()
+        with _patch_client(mock):
+            with pytest.raises(RuntimeError, match="page locked"):
+                asyncio.run(mcp_mod.add_content_storage(
+                    "https://confluence.example.com/a", "<p/>", ctx=ctx
+                ))
+
+
+# ---------------------------------------------------------------------------
+# MCP Resources
 # ---------------------------------------------------------------------------
 
 
@@ -326,6 +500,56 @@ class TestPageResource:
         with _patch_client(mock):
             with pytest.raises(RuntimeError, match="network error"):
                 mcp_mod.page_resource("99999")
+
+
+class TestPageResourceStorage:
+    def test_returns_storage_xhtml(self):
+        mock = _make_client()
+        with _patch_client(mock):
+            result = mcp_mod.page_resource_storage("12345")
+        mock.get_page_content.assert_called_once_with("12345")
+        mock._prettify_storage.assert_called_once_with("<p>Hello</p>")
+        assert "Page A" in result
+
+    def test_error_raises_runtime(self):
+        mock = _make_client()
+        mock.get_page_content.side_effect = Exception("network error")
+        with _patch_client(mock):
+            with pytest.raises(RuntimeError, match="network error"):
+                mcp_mod.page_resource_storage("99999")
+
+
+# ---------------------------------------------------------------------------
+# Human-in-the-loop confirmation (_confirm_write)
+# ---------------------------------------------------------------------------
+
+
+class TestConfirmWrite:
+    def test_no_elicitation_support_proceeds(self):
+        mock = _make_client()
+        ctx = _make_ctx(supports_elicitation=False)
+        with _patch_client(mock):
+            # Should NOT raise even though we never elicit
+            asyncio.run(mcp_mod.edit_page_md("https://confluence.example.com/a", "body", ctx=ctx))
+        ctx.elicit.assert_not_called()
+
+    def test_user_declines_raises_permission_error(self):
+        from mcp.server.elicitation import DeclinedElicitation
+        mock = _make_client()
+        ctx = _make_ctx()
+        ctx.elicit = AsyncMock(return_value=DeclinedElicitation())
+        with _patch_client(mock):
+            with pytest.raises(PermissionError):
+                asyncio.run(mcp_mod.edit_page_md("https://confluence.example.com/a", "body", ctx=ctx))
+
+    def test_remember_skips_subsequent_prompts(self):
+        mock = _make_client()
+        ctx = _make_ctx(remember=True)
+        with _patch_client(mock):
+            asyncio.run(mcp_mod.edit_page_md("https://confluence.example.com/a", "body", ctx=ctx))
+            # Second call: _writes_confirmed_session is True, elicit should not be called again
+            asyncio.run(mcp_mod.edit_page_md("https://confluence.example.com/b", "body", ctx=ctx))
+        assert ctx.elicit.call_count == 1
 
 
 # ---------------------------------------------------------------------------

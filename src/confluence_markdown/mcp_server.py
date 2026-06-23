@@ -1,4 +1,24 @@
-"""MCP stdio server exposing Confluence operations as tools."""
+"""MCP stdio server exposing Confluence operations as tools.
+
+Tool families
+─────────────
+*_storage (RECOMMENDED for agents): use the Confluence storage format
+    (XHTML) — Atlassian's native page format — and preserve tables
+    (colspan/rowspan), macros (ac: elements), and layouts losslessly.
+    Equivalent to ``representation: "storage"`` in the REST API.
+
+*_md: convert content to/from Markdown for human readability.  Convenient
+    but lossy for tables with colspan/rowspan and Confluence macros.  Prefer
+    the *_storage variants unless you specifically need Markdown output.
+
+Navigation / search tools (search_pages, list_recent_pages, list_spaces,
+list_children) have no format dimension and are left unsuffixed.
+
+BREAKING CHANGE from the previous release: the tools formerly named
+``get_page``, ``edit_page``, ``create_page``, and ``add_content_to_page``
+have been renamed with the ``_md`` suffix.  Update any MCP configurations
+that reference the old names.
+"""
 
 from __future__ import annotations
 
@@ -32,7 +52,19 @@ logger = logging.getLogger(__name__)
 
 mcp = FastMCP(
     "confluence",
-    instructions="Read and write Confluence Data Center pages",
+    instructions=(
+        "Read and write Confluence Data Center pages.\n\n"
+        "IMPORTANT — tool selection:\n"
+        "• Prefer the *_storage tools for all content operations. They use the "
+        "Confluence storage format (XHTML) — Atlassian's official native page "
+        "format — and preserve tables (colspan/rowspan), macros (ac: elements), "
+        "and layouts losslessly. This is equivalent to representation:\"storage\" "
+        "in the Confluence REST API.\n"
+        "• Use the *_md tools only when you specifically need human-readable "
+        "Markdown output (e.g. when summarising a page for a user).\n"
+        "• Navigation / search tools have no format dimension: search_pages, "
+        "list_recent_pages, list_spaces, list_children."
+    ),
 )
 
 _client: ConfluenceClient | None = None
@@ -139,7 +171,7 @@ def _ok(data: Any) -> str:
     return json.dumps(data, ensure_ascii=False, indent=2)
 
 
-# ── Read tools ────────────────────────────────────────────────────────────────
+# ── Navigation / search tools (no format dimension) ───────────────────────────
 
 
 @mcp.tool(annotations=ToolAnnotations(readOnlyHint=True, destructiveHint=False))
@@ -172,25 +204,6 @@ def search_pages(
 
 
 @mcp.tool(annotations=ToolAnnotations(readOnlyHint=True, destructiveHint=False))
-def get_page(page_url: str) -> str:
-    """Get the full content of a Confluence page by its URL.
-
-    Accepts any Confluence page URL, e.g.
-      https://wiki.example.com/pages/viewpage.action?pageId=12345
-      https://wiki.example.com/display/SPACE/Page+Title
-
-    Returns a JSON object with: id, title, space, version, url, and the page body
-    converted to markdown.
-    """
-    client = _get_client()
-    try:
-        result = client.read_page_content(page_url)
-        return _ok(result)
-    except ConfluenceError as e:
-        raise RuntimeError(str(e)) from e
-
-
-@mcp.tool(annotations=ToolAnnotations(readOnlyHint=True, destructiveHint=False))
 def list_recent_pages(limit: int = 10) -> str:
     """List Confluence pages recently modified by the authenticated user.
 
@@ -211,7 +224,8 @@ def list_spaces(limit: int = 50) -> str:
     """List all Confluence spaces accessible by the authenticated user.
 
     Returns up to `limit` spaces (max 50). Each entry includes key, name, type, and url.
-    Use the space key (e.g. "DEV", "DOCS") when creating pages with create_page.
+    Use the space key (e.g. "DEV", "DOCS") when creating pages with create_page_md or
+    create_page_storage.
     """
     client = _get_client()
     try:
@@ -237,25 +251,258 @@ def list_children(page_url: str, limit: int = 50) -> str:
         raise RuntimeError(str(e)) from e
 
 
-# ── Write tools ───────────────────────────────────────────────────────────────
+# ── *_storage read/write tools (RECOMMENDED) ─────────────────────────────────
+
+
+@mcp.tool(annotations=ToolAnnotations(readOnlyHint=True, destructiveHint=False))
+def get_page_storage(page_url: str) -> str:
+    """RECOMMENDED — Get the raw Confluence storage format (XHTML) of a page.
+
+    Returns the page body in Confluence storage format (XHTML) — Atlassian's
+    official native page format (``representation: "storage"`` in the REST API).
+    This is a lossless representation: tables with colspan/rowspan, macros
+    (ac: elements), layouts, and all other Confluence-specific constructs are
+    preserved verbatim.
+
+    Use this tool (and the other *_storage tools) whenever you intend to edit
+    or analyse page content — it is the preferred tool family for agents.
+
+    Accepts any Confluence page URL, e.g.
+      https://wiki.example.com/pages/viewpage.action?pageId=12345
+      https://wiki.example.com/display/SPACE/Page+Title
+
+    Returns a JSON object with: id, title, space, version, url, and
+    ``storage_content`` (pretty-printed storage XHTML ready for editing).
+    """
+    client = _get_client()
+    try:
+        result = client.read_page_content(page_url)
+    except ConfluenceError as e:
+        raise RuntimeError(str(e)) from e
+    return _ok({
+        "id": result["id"],
+        "title": result["title"],
+        "space": result["space"],
+        "space_key": result["space_key"],
+        "version": result["version"],
+        "url": result["url"],
+        "storage_content": client._prettify_storage(result["html_content"]),
+    })
 
 
 @mcp.tool(annotations=ToolAnnotations(readOnlyHint=False, destructiveHint=True))
-async def create_page(
+async def edit_page_storage(page_url: str, content: str, ctx: Context) -> str:
+    """RECOMMENDED — Replace the full body of a Confluence page with storage format (XHTML).
+
+    Accepts content in Confluence storage format (XHTML) — Atlassian's official
+    native page format — and uploads it losslessly via ``representation: "storage"``.
+    Tables with colspan/rowspan, macros (ac: elements), layouts, and all other
+    Confluence constructs are preserved exactly.
+
+    The content is validated for well-formedness before upload; malformed XHTML
+    is rejected locally with a clear error message (no opaque HTTP 400).
+
+    Use get_page_storage first to read the current storage content, then supply
+    the modified XHTML here.
+
+    Prefer this tool over edit_page_md for any page that contains tables, macros,
+    or complex layouts.  Use edit_page_md only when you specifically need to supply
+    Markdown input.
+
+    Returns a JSON object with the page's id, title, new version number, and url.
+    """
+    await _confirm_write(ctx, f"Overwrite full content of page at {page_url} (storage format)")
+    client = _get_client()
+    ok, err = client._validate_storage_xhtml(content)
+    if not ok:
+        raise ValueError(f"Invalid Confluence storage format XHTML: {err}")
+    with _silence_stdout():
+        try:
+            result = client.edit_page_with_editor(
+                page_url, content=content, content_type="storage"
+            )
+        except ConfluenceError as e:
+            raise RuntimeError(str(e)) from e
+    page_id = result["id"]
+    return _ok({
+        "id": page_id,
+        "title": result.get("title"),
+        "version": result.get("version", {}).get("number"),
+        "url": f"{client.base_url}/pages/viewpage.action?pageId={page_id}",
+    })
+
+
+@mcp.tool(annotations=ToolAnnotations(readOnlyHint=False, destructiveHint=True))
+async def create_page_storage(
     space_key: str,
     title: str,
     content: str,
     ctx: Context,
     parent_id: str | None = None,
 ) -> str:
-    """Create a new Confluence page with markdown content.
+    """RECOMMENDED — Create a new Confluence page with storage format (XHTML) content.
+
+    Accepts the page body in Confluence storage format (XHTML) — Atlassian's
+    official native page format — and creates the page losslessly.  Tables,
+    macros, layouts, and all Confluence-specific constructs are preserved.
+
+    The content is validated for well-formedness before upload.
 
     Args:
         space_key: Key of the target space (e.g. "DEV", "DOCS"). Use list_spaces to find it.
         title: Page title (must be unique within the space).
-        content: Page body in markdown format.
-        parent_id: Optional numeric ID of the parent page. When omitted the page is created
-                   at the space root. Use list_children or get_page to find parent IDs.
+        content: Page body in Confluence storage format (XHTML).
+        parent_id: Optional numeric ID of the parent page.
+
+    Prefer this tool over create_page_md when the page content contains tables,
+    macros, or complex layouts.
+
+    Returns a JSON object with the new page's id, title, and url.
+    """
+    await _confirm_write(ctx, f"Create page '{title}' in space '{space_key}' (storage format)")
+    client = _get_client()
+    ok, err = client._validate_storage_xhtml(content)
+    if not ok:
+        raise ValueError(f"Invalid Confluence storage format XHTML: {err}")
+    with _silence_stdout():
+        try:
+            result = client.create_page(
+                space_key=space_key,
+                title=title,
+                content=content,
+                parent_id=parent_id,
+                content_type="html",
+            )
+        except ConfluenceError as e:
+            raise RuntimeError(str(e)) from e
+    page_id = result["id"]
+    return _ok({
+        "id": page_id,
+        "title": result.get("title", title),
+        "url": f"{client.base_url}/pages/viewpage.action?pageId={page_id}",
+    })
+
+
+@mcp.tool(annotations=ToolAnnotations(readOnlyHint=False, destructiveHint=True))
+async def add_content_storage(
+    page_url: str,
+    content: str,
+    ctx: Context,
+    append: bool = True,
+) -> str:
+    """RECOMMENDED — Add storage format (XHTML) content to an existing Confluence page.
+
+    Appends or prepends content in Confluence storage format (XHTML) —
+    Atlassian's official native page format — without replacing the existing
+    body.  Tables, macros, and layouts are preserved losslessly.
+
+    The supplied content is validated for well-formedness before upload.
+
+    Args:
+        page_url: URL of the page to update.
+        content: Content to add in Confluence storage format (XHTML).
+        append: True (default) to add after existing content; False to prepend.
+
+    Prefer this tool over add_content_md when adding content with tables or macros.
+
+    Returns a JSON object with the page's id, title, and new version number.
+    """
+    client = _get_client()
+    ok, err = client._validate_storage_xhtml(content)
+    if not ok:
+        raise ValueError(f"Invalid Confluence storage format XHTML: {err}")
+    position = "append to" if append else "prepend to"
+    await _confirm_write(ctx, f"Add storage content ({position}) page at {page_url}")
+    try:
+        result = client.add_content_to_page(
+            page_url, content, append=append, content_type="html"
+        )
+    except ConfluenceError as e:
+        raise RuntimeError(str(e)) from e
+    return _ok({
+        "id": result["id"],
+        "title": result.get("title"),
+        "version": result.get("version", {}).get("number"),
+    })
+
+
+# ── *_md read/write tools ─────────────────────────────────────────────────────
+
+
+@mcp.tool(annotations=ToolAnnotations(readOnlyHint=True, destructiveHint=False))
+def get_page_md(page_url: str) -> str:
+    """Get the content of a Confluence page converted to Markdown.
+
+    Convenient for human-readable summaries, but lossy: tables with
+    colspan/rowspan, macros (ac: elements), and complex layouts cannot be
+    faithfully represented in Markdown.  Prefer get_page_storage when you
+    intend to edit or re-upload the content.
+
+    Accepts any Confluence page URL, e.g.
+      https://wiki.example.com/pages/viewpage.action?pageId=12345
+      https://wiki.example.com/display/SPACE/Page+Title
+
+    Returns a JSON object with: id, title, space, version, url, and the page
+    body converted to Markdown.
+    """
+    client = _get_client()
+    try:
+        result = client.read_page_content(page_url)
+        return _ok(result)
+    except ConfluenceError as e:
+        raise RuntimeError(str(e)) from e
+
+
+@mcp.tool(annotations=ToolAnnotations(readOnlyHint=False, destructiveHint=True))
+async def edit_page_md(page_url: str, content: str, ctx: Context) -> str:
+    """Replace the full body of a Confluence page with Markdown content.
+
+    Convenient for simple pages, but lossy for tables with colspan/rowspan,
+    macros (ac: elements), and complex layouts.  Prefer edit_page_storage for
+    any page that contains such constructs.
+
+    The existing page content is completely overwritten.  Use add_content_md
+    if you only want to append or prepend without discarding the current body.
+
+    Returns a JSON object with the page's id, title, new version number, and url.
+    """
+    await _confirm_write(ctx, f"Overwrite full content of page at {page_url}")
+    client = _get_client()
+    with _silence_stdout():
+        try:
+            result = client.edit_page_with_editor(
+                page_url, content=content, content_type="markdown"
+            )
+        except ConfluenceError as e:
+            raise RuntimeError(str(e)) from e
+    page_id = result["id"]
+    return _ok({
+        "id": page_id,
+        "title": result.get("title"),
+        "version": result.get("version", {}).get("number"),
+        "url": f"{client.base_url}/pages/viewpage.action?pageId={page_id}",
+    })
+
+
+@mcp.tool(annotations=ToolAnnotations(readOnlyHint=False, destructiveHint=True))
+async def create_page_md(
+    space_key: str,
+    title: str,
+    content: str,
+    ctx: Context,
+    parent_id: str | None = None,
+) -> str:
+    """Create a new Confluence page with Markdown content.
+
+    Convenient for simple pages, but lossy for tables with colspan/rowspan,
+    macros, and complex layouts.  Prefer create_page_storage for pages that
+    contain such constructs.
+
+    Args:
+        space_key: Key of the target space (e.g. "DEV", "DOCS"). Use list_spaces to find it.
+        title: Page title (must be unique within the space).
+        content: Page body in Markdown format.
+        parent_id: Optional numeric ID of the parent page.
 
     Returns a JSON object with the new page's id, title, and url.
     """
@@ -263,7 +510,6 @@ async def create_page(
     client = _get_client()
     with _silence_stdout():
         try:
-            # TODO: wrap blocking client call in asyncio.to_thread if concurrency needed
             result = client.create_page(
                 space_key=space_key,
                 title=title,
@@ -282,41 +528,16 @@ async def create_page(
 
 
 @mcp.tool(annotations=ToolAnnotations(readOnlyHint=False, destructiveHint=True))
-async def edit_page(page_url: str, content: str, ctx: Context) -> str:
-    """Replace the full body of a Confluence page with new markdown content.
-
-    The existing page content is completely overwritten. Use add_content_to_page
-    if you only want to append or prepend without discarding the current body.
-
-    Returns a JSON object with the page's id, title, new version number, and url.
-    """
-    await _confirm_write(ctx, f"Overwrite full content of page at {page_url}")
-    client = _get_client()
-    with _silence_stdout():
-        try:
-            # TODO: wrap blocking client call in asyncio.to_thread if concurrency needed
-            result = client.edit_page_with_editor(
-                page_url, content=content, content_type="markdown"
-            )
-        except ConfluenceError as e:
-            raise RuntimeError(str(e)) from e
-    page_id = result["id"]
-    return _ok({
-        "id": page_id,
-        "title": result.get("title"),
-        "version": result.get("version", {}).get("number"),
-        "url": f"{client.base_url}/pages/viewpage.action?pageId={page_id}",
-    })
-
-
-@mcp.tool(annotations=ToolAnnotations(readOnlyHint=False, destructiveHint=True))
-async def add_content_to_page(
+async def add_content_md(
     page_url: str,
     content: str,
     ctx: Context,
     append: bool = True,
 ) -> str:
-    """Add markdown content to an existing Confluence page without replacing it.
+    """Add Markdown content to an existing Confluence page without replacing it.
+
+    Convenient for simple content, but lossy for tables with colspan/rowspan,
+    macros, and complex layouts.  Prefer add_content_storage for such cases.
 
     Args:
         page_url: URL of the page to update.
@@ -329,7 +550,6 @@ async def add_content_to_page(
     await _confirm_write(ctx, f"Add content ({position}) page at {page_url}")
     client = _get_client()
     try:
-        # TODO: wrap blocking client call in asyncio.to_thread if concurrency needed
         result = client.add_content_to_page(
             page_url, content, append=append, content_type="markdown"
         )
@@ -342,15 +562,16 @@ async def add_content_to_page(
     })
 
 
-# ── MCP Resource ──────────────────────────────────────────────────────────────
+# ── MCP Resources ─────────────────────────────────────────────────────────────
 
 
 @mcp.resource("confluence://page/{page_id}")
 def page_resource(page_id: str) -> str:
-    """Return a Confluence page as a markdown MCP resource.
+    """Return a Confluence page as a Markdown MCP resource.
 
     Access via URI: confluence://page/{page_id}
-    The page body is converted from Confluence storage format to markdown.
+    The page body is converted from Confluence storage format to Markdown.
+    For lossless access use the storage variant: confluence://page/{page_id}/storage
     """
     client = _get_client()
     try:
@@ -361,6 +582,27 @@ def page_resource(page_id: str) -> str:
     md = client._html_to_markdown(html)
     title = data.get("title", page_id)
     return f"# {title}\n\n{md}"
+
+
+@mcp.resource("confluence://page/{page_id}/storage")
+def page_resource_storage(page_id: str) -> str:
+    """Return a Confluence page as a storage format (XHTML) MCP resource.
+
+    Access via URI: confluence://page/{page_id}/storage
+    Returns the raw Confluence storage format (XHTML) — Atlassian's official
+    native page format — pretty-printed for readability.  Tables, macros, and
+    layouts are preserved losslessly.
+    For Markdown access use: confluence://page/{page_id}
+    """
+    client = _get_client()
+    try:
+        data = client.get_page_content(page_id)
+    except Exception as e:
+        raise RuntimeError(f"Could not load page {page_id}: {e}") from e
+    html = data["body"]["storage"]["value"]
+    title = data.get("title", page_id)
+    pretty = client._prettify_storage(html)
+    return f"<!-- Title: {title} -->\n{pretty}"
 
 
 # ── Entry point ───────────────────────────────────────────────────────────────

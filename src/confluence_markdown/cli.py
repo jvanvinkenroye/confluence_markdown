@@ -120,6 +120,18 @@ def create_parser() -> argparse.ArgumentParser:
         help="Type of content to add",
     )
     parser.add_argument(
+        "--format",
+        choices=["md", "storage"],
+        default="md",
+        dest="fmt",
+        help=(
+            "Page format for download/read/edit. "
+            "'md' (default) converts to Markdown. "
+            "'storage' uses Confluence storage format (XHTML, Atlassian's official format) "
+            "for lossless round-trips — preserves tables, macros, and layouts."
+        ),
+    )
+    parser.add_argument(
         "--append",
         action="store_true",
         default=True,
@@ -674,9 +686,10 @@ def handle_download(client: ConfluenceClient, args: argparse.Namespace) -> None:
 
         print(f"Downloaded {len(results)} pages to {output_dir}/")
     else:
-        markdown_content = client.download_as_markdown(args.url, args.output)
+        fmt = getattr(args, "fmt", "md") or "md"
+        content = client.download_page(args.url, args.output, fmt=fmt)
         if not args.output:
-            print(markdown_content)
+            print(content)
         print(f"Page URL: {args.url}")
 
 
@@ -725,7 +738,11 @@ def handle_edit(client: ConfluenceClient, args: argparse.Namespace) -> None:
         raise ConfigurationError("URL is required for edit action")
 
     content = getattr(args, "content", None) or None
-    content_type = getattr(args, "content_type", "markdown") or "markdown"
+    fmt = getattr(args, "fmt", "md") or "md"
+    if fmt == "storage":
+        content_type = "storage"
+    else:
+        content_type = getattr(args, "content_type", "markdown") or "markdown"
 
     result = client.edit_page_with_editor(args.url, content=content, content_type=content_type)
     if result is None:

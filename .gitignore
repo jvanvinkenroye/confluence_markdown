@@ -46,6 +46,9 @@ GEMINI.md
 # MkDocs build output
 site/
 
+# Internal work plans / implementation prompts (kept out of version control)
+.plan/
+
 # One-off scripts with credentials
 add_*.py
 create_*.py

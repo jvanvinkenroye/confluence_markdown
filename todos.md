@@ -6,6 +6,7 @@
 - [ ] Tests: Keyring-Fallback-Pfad
 
 ## Completed
+- [x] Feat: Confluence storage format (XHTML) mode — lossless round-trips for tables/macros without Markdown conversion. MCP: `*_storage` tools (preferred for agents) + `*_md` tools (renamed); CLI `--format md|storage`; `_validate_storage_xhtml` + `_prettify_storage` helpers; bug fix for `content_type="html"` in `edit_page_with_editor`. **BREAKING:** MCP tools `get_page`/`edit_page`/`create_page`/`add_content_to_page` renamed to `*_md` suffix. | Completed: 06-22-2026
 - [x] Feat: Human-in-the-Loop-Bestätigung für Schreib-Tools via MCP-Elicitation (`create_page`, `edit_page`, `add_content_to_page`); Fail-Safe bei fehlendem Elicitation-Support; Session-Flag `_writes_confirmed_session` für "Merken"-Option (mcp_server.py) | Completed: 06-19-2026
 - [x] Fix: Keyring-Fallback mit expliziter Warnung statt silent Plaintext (config.py:81-85) | Completed: 05-17-2026
 - [x] Fix: print() → logger.error() in client.py (alle Stellen) | Completed: 05-17-2026

@@ -405,26 +405,44 @@ Restart Claude Desktop after editing the config file.
 
 ### Available MCP tools
 
+**Navigation / search** (no format dimension):
+
 | Tool | Description |
 |------|-------------|
 | `search_pages` | Search via CQL or free-text query |
-| `get_page` | Get full page content (markdown + metadata) by URL |
 | `list_recent_pages` | Pages recently modified by you |
 | `list_spaces` | All accessible spaces |
 | `list_children` | Direct child pages of a page |
-| `create_page` | Create a new page with markdown content |
-| `edit_page` | Replace a page's full content |
-| `add_content_to_page` | Append or prepend content to a page |
 
-Pages are also accessible as MCP resources via `confluence://page/{page_id}`.
+**`*_storage` family — RECOMMENDED for agents** (Confluence storage format, lossless):
+
+| Tool | Description |
+|------|-------------|
+| `get_page_storage` | Get page in Confluence storage format (XHTML) — preserves tables, macros, layouts |
+| `edit_page_storage` | Replace page body with storage XHTML — lossless, validates before upload |
+| `create_page_storage` | Create a page with storage XHTML content |
+| `add_content_storage` | Append/prepend storage XHTML to a page |
+
+**`*_md` family** (Markdown, convenient but lossy for complex tables/macros):
+
+| Tool | Description |
+|------|-------------|
+| `get_page_md` | Get page content converted to Markdown |
+| `edit_page_md` | Replace page body with Markdown content |
+| `create_page_md` | Create a page with Markdown content |
+| `add_content_md` | Append/prepend Markdown content to a page |
+
+Pages are also accessible as MCP resources:
+- `confluence://page/{page_id}` — Markdown
+- `confluence://page/{page_id}/storage` — Confluence storage format (XHTML)
 
 ### Write protection (human-in-the-loop)
 
 When the MCP client supports
 [elicitation](https://modelcontextprotocol.io/docs/concepts/elicitation),
-`create_page`, `edit_page`, and `add_content_to_page` prompt for explicit
-confirmation before executing. Clients that do not support elicitation
-(automated agents, older clients) proceed without the prompt.
+all write tools (`*_storage` and `*_md`) prompt for explicit confirmation
+before executing. Clients that do not support elicitation (automated agents,
+older clients) proceed without the prompt.
 
 The confirmation form has two fields:
 
@@ -447,7 +465,46 @@ confluence-markdown-mcp  # should block waiting for stdin (Ctrl-C to exit)
 confluence-markdown --action test-auth
 ```
 
-**`create_page` or `edit_page` returns no output** — These operations print progress to stdout, which would corrupt the MCP JSON-RPC channel. The server automatically redirects such output to stderr so it only appears in `~/Library/Logs/Claude/mcp-server-confluence.log`.
+**`create_page_md` or `edit_page_md` returns no output** — These operations print progress to stdout, which would corrupt the MCP JSON-RPC channel. The server automatically redirects such output to stderr so it only appears in `~/Library/Logs/Claude/mcp-server-confluence.log`.
+
+---
+
+## Confluence storage format mode
+
+Confluence stores pages in **storage format** — Atlassian's official XHTML format with `ac:` (Atlassian Confluence — macros, layouts, tasks) and `ri:` (resource identifiers — attachments, users, pages) namespaced elements. This is the same representation returned by the REST API's `representation: "storage"` parameter. See the [official Atlassian documentation](https://confluence.atlassian.com/doc/confluence-storage-format-790796544.html).
+
+The default Markdown mode converts storage format to Markdown and back, which is lossy for:
+- Tables with `colspan`/`rowspan` or multi-paragraph cells
+- Confluence macros (`ac:structured-macro`, `ac:task-list`, …)
+- Layouts and nested content
+
+**Storage format mode is a pure passthrough** — no conversion happens. Read the raw XHTML, edit it, upload it verbatim.
+
+### When to use storage format vs. Markdown
+
+| Situation | Recommended mode |
+|-----------|-----------------|
+| Simple text pages, bullet lists | Markdown (default) |
+| Pages with complex tables | Storage format |
+| Pages with Confluence macros | Storage format |
+| Agents editing via MCP | Storage format (`*_storage` tools) |
+| Summarising a page for a human | Markdown (`*_md` tools) |
+
+### CLI usage
+
+```bash
+# Download in storage format (writes pretty-printed XHTML with comment header)
+confluence-markdown download https://wiki.example.com/... --format storage -o page.html
+
+# Edit in storage format (non-interactive: pass XHTML directly)
+confluence-markdown edit https://wiki.example.com/... --format storage --content '<p>Updated</p>'
+```
+
+The `--format storage` flag defaults the download extension to `.html` (for editor syntax highlighting); the content is Confluence storage format XHTML, not HTML5.
+
+### Validation
+
+Storage XHTML is validated locally before every upload. Malformed input — unclosed tags, bare `&`, non-self-closing void elements — is rejected with a clear error message before any API call is made.
 
 ---
 
