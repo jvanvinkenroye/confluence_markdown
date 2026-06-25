@@ -426,30 +426,64 @@ Edit `~/Library/Application Support/Claude/claude_desktop_config.json`:
 {
   "mcpServers": {
     "confluence": {
-      "command": "/absolute/path/to/.venv/bin/confluence-markdown-mcp"
+      "command": "uv",
+      "args": [
+        "--directory",
+        "/absolute/path/to/confluence_markdown",
+        "run",
+        "confluence-markdown-mcp"
+      ]
     }
   }
 }
 ```
 
-The server reuses your saved config profile automatically (same credentials as the CLI). If you haven't saved credentials yet, run `confluence-markdown --save-config` first, or pass credentials via environment variables:
+The server automatically uses your saved config profile (same credentials as the CLI). If credentials aren't saved, add them via environment variables:
 
 ```json
 {
   "mcpServers": {
     "confluence": {
-      "command": "/absolute/path/to/.venv/bin/confluence-markdown-mcp",
+      "command": "uv",
+      "args": [
+        "--directory",
+        "/absolute/path/to/confluence_markdown",
+        "run",
+        "confluence-markdown-mcp"
+      ],
       "env": {
-        "CONFLUENCE_URL": "https://wiki.example.com",
-        "CONFLUENCE_USERNAME": "user",
-        "CONFLUENCE_TOKEN": "PAT"
+        "CONFLUENCE_URL": "https://your-confluence.com",
+        "CONFLUENCE_USERNAME": "your_username",
+        "CONFLUENCE_TOKEN": "your_pat_token"
       }
     }
   }
 }
 ```
 
-Restart Claude Desktop after editing the config file.
+Then **restart Claude Desktop** (⌘Q and reopen).
+
+### Configure Claude Code
+
+Edit `~/.claude/settings.json`:
+
+```json
+{
+  "mcpServers": {
+    "confluence": {
+      "command": "uv",
+      "args": [
+        "--directory",
+        "/absolute/path/to/confluence_markdown",
+        "run",
+        "confluence-markdown-mcp"
+      ]
+    }
+  }
+}
+```
+
+Then **restart Claude Code** (close and reopen, or in a new tab).
 
 ### Available MCP tools
 
@@ -492,6 +526,32 @@ Pages are also accessible as MCP resources:
 - `confluence://page/{page_id}` — Markdown
 - `confluence://page/{page_id}/storage` — Confluence storage format (XHTML)
 
+### MCP Usage Examples
+
+**In Claude Desktop or Claude Code, just describe what you want:**
+
+```
+"List all Confluence spaces I have access to"
+→ Claude calls list_spaces automatically
+
+"Create a new page in the DOCS space about API authentication"
+→ Claude calls create_page_md with your content
+
+"Show me the last 5 pages I modified"
+→ Claude calls list_recent_pages(limit=5)
+
+"Search for pages mentioning 'deployment'"
+→ Claude calls search_pages with your query
+
+"Read the page confluence://page/12345 and explain the table"
+→ Claude reads the page via resource and explains it
+```
+
+**You don't need to invoke tools manually.** Claude automatically:
+1. Selects the appropriate tool (`*_storage` for APIs, `*_md` for humans)
+2. Handles errors and retries
+3. Confirms writes if the client supports it
+
 ### Write protection (human-in-the-loop)
 
 When the MCP client supports
@@ -509,19 +569,76 @@ The confirmation form has two fields:
 
 ### MCP Troubleshooting
 
-**Tools time out in Claude Desktop** — The MCP server process is started once per Claude Desktop session and does not auto-restart after long idle periods. If tool calls fail or time out, restart Claude Desktop to re-establish the connection.
+**MCP tools don't appear in Claude Code's tool list**
 
-**Server fails to start** — Check that the `mcp` extra is installed and credentials are configured:
+This is normal behavior! Claude Code lazy-loads local MCPs and may not show them in the UI. **They still work.** Test by asking Claude:
+> "List my Confluence spaces"
+
+If it succeeds, the MCP is active. Claude automatically selects the right tool based on your request.
+
+**Tools time out or "server not responding" in Claude Desktop/Code**
+
+The MCP server is a persistent stdio process. If it becomes unresponsive:
+- **Claude Desktop:** Restart (⌘Q → reopen)
+- **Claude Code:** Restart or open in a new tab
+
+This resets the server connection.
+
+**Server fails to start or "command not found"**
+
+Verify the server works:
 
 ```bash
-# Verify the binary works
-confluence-markdown-mcp  # should block waiting for stdin (Ctrl-C to exit)
+# Test the binary directly
+timeout 5 uv run confluence-markdown-mcp 2>&1
+# Should timeout waiting for stdin (this is normal)
 
-# Verify credentials
+# Verify credentials are saved
 confluence-markdown --action test-auth
 ```
 
-**`create_page_md` or `edit_page_md` returns no output** — These operations print progress to stdout, which would corrupt the MCP JSON-RPC channel. The server automatically redirects such output to stderr so it only appears in `~/Library/Logs/Claude/mcp-server-confluence.log`.
+If `test-auth` fails with 403, regenerate your API token in Confluence and update:
+
+```bash
+confluence-markdown \
+  --base-url https://your-confluence.com \
+  --username your_username \
+  --token NEW_TOKEN \
+  --save-config \
+  --action test-auth
+```
+
+**Authentication fails (403 Forbidden)**
+
+- Verify your Confluence URL, username, and token are correct
+- If using Data Center, token must have API access enabled
+- Check that your account isn't locked or suspended
+- Regenerate a new API token in Confluence
+
+**XHTML validation errors when creating pages with `*_storage` tools**
+
+Special characters must be escaped in XHTML:
+- `&` → `&amp;`
+- `<` → `&lt;`
+- `>` → `&gt;`
+- `"` → `&quot;`
+
+The MCP server validates XHTML before upload and returns an error if malformed.
+
+**Page creation appears to succeed but no output returned**
+
+Operations like `create_page_md` and `edit_page_md` trigger write confirmation in Claude (if supported). The server prints progress to stderr to keep stdout clean for JSON-RPC. This is normal and expected.
+
+### Format Comparison: `*_storage` vs `*_md`
+
+| Feature | Storage (`*_storage`) | Markdown (`*_md`) |
+|---------|---|---|
+| Tables with colspan/rowspan | ✅ Preserved | ❌ Flattened |
+| Confluence macros | ✅ Preserved (ac:structured-macro) | ❌ Lost |
+| HTML styling | ✅ Preserved | ❌ Lost |
+| Human readability | ⚠️ XHTML (verbose) | ✅ Easy to read |
+| Lossless round-trip | ✅ Yes (get → edit) | ❌ No (lossy) |
+| **Use when** | **Building automation, APIs, complex pages** | **Summarizing, quick edits, simple content** |
 
 ---
 
