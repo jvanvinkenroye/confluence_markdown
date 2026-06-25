@@ -371,3 +371,132 @@ class TestCLI:
         result = self._run("--clear-cache")
         assert result.returncode == 0
         assert "Cleared" in result.stdout
+
+
+# ---------------------------------------------------------------------------
+# Confluence storage format helpers (Fase 0)
+# ---------------------------------------------------------------------------
+
+
+def _make_stub_client() -> ConfluenceClient:
+    """Return a ConfluenceClient without making any network calls."""
+    return ConfluenceClient(
+        base_url="https://confluence.example.com",
+        token="dummy-token",
+        cache_enabled=False,
+    )
+
+
+class TestValidateStorageXhtml:
+    """Unit tests for ConfluenceClient._validate_storage_xhtml."""
+
+    def setup_method(self):
+        self.client = _make_stub_client()
+
+    def _ok(self, html: str) -> None:
+        valid, err = self.client._validate_storage_xhtml(html)
+        assert valid is True, f"Expected valid, got error: {err}"
+        assert err is None
+
+    def _fail(self, html: str, fragment: str) -> None:
+        valid, err = self.client._validate_storage_xhtml(html)
+        assert valid is False, "Expected invalid, but validation passed"
+        assert err is not None
+        assert fragment in err, f"Expected {fragment!r} in error: {err!r}"
+
+    def test_simple_paragraph(self):
+        self._ok("<p>Hello world</p>")
+
+    def test_self_closing_br(self):
+        self._ok("<p>Line one<br/>Line two</p>")
+
+    def test_open_br_is_normalized_and_valid(self):
+        """<br> without slash should be auto-normalized to <br/> before validation."""
+        self._ok("<p>Line one<br>Line two</p>")
+
+    def test_void_img_normalized(self):
+        self._ok('<p><img src="x.png" alt="x"/></p>')
+
+    def test_open_img_normalized(self):
+        self._ok('<p><img src="x.png"></p>')
+
+    def test_confluence_macro_valid(self):
+        xhtml = (
+            '<ac:structured-macro ac:name="code">'
+            '<ac:parameter ac:name="language">python</ac:parameter>'
+            "<ac:plain-text-body><![CDATA[print('hello')]]></ac:plain-text-body>"
+            "</ac:structured-macro>"
+        )
+        self._ok(xhtml)
+
+    def test_ri_page_reference_valid(self):
+        self._ok('<ri:page ri:content-title="My Page"/>')
+
+    def test_table_with_colspan(self):
+        xhtml = (
+            "<table><tbody><tr>"
+            '<td colspan="2">merged</td>'
+            "</tr><tr>"
+            "<td>a</td><td>b</td>"
+            "</tr></tbody></table>"
+        )
+        self._ok(xhtml)
+
+    def test_bare_ampersand_rejected(self):
+        self._fail("<p>AT&T</p>", "&")
+
+    def test_entity_amp_ok(self):
+        self._ok("<p>AT&amp;T</p>")
+
+    def test_numeric_entity_ok(self):
+        self._ok("<p>space&#160;here</p>")
+
+    def test_hex_entity_ok(self):
+        self._ok("<p>space&#xA0;here</p>")
+
+    def test_unclosed_tag_rejected(self):
+        self._fail("<p>Not closed", "well-formed")
+
+    def test_mismatched_tags_rejected(self):
+        self._fail("<p>text</div>", "well-formed")
+
+    def test_empty_string_valid(self):
+        self._ok("")
+
+    def test_multiple_top_level_elements(self):
+        self._ok("<p>First</p><p>Second</p>")
+
+
+class TestPrettifyStorage:
+    """Unit tests for ConfluenceClient._prettify_storage."""
+
+    def setup_method(self):
+        self.client = _make_stub_client()
+
+    def test_adds_indentation(self):
+        result = self.client._prettify_storage("<div><p>Hello</p></div>")
+        assert "\n" in result
+        assert "Hello" in result
+
+    def test_preserves_ac_plain_text_body_content(self):
+        """Whitespace inside ac:plain-text-body must not be reflowed."""
+        inner = "def foo():\n    return 42"
+        html = f"<ac:plain-text-body>{inner}</ac:plain-text-body>"
+        result = self.client._prettify_storage(html)
+        assert inner in result
+
+    def test_preserves_pre_content(self):
+        inner = "  indented\n    more"
+        html = f"<pre>{inner}</pre>"
+        result = self.client._prettify_storage(html)
+        assert inner in result
+
+    def test_regular_elements_are_prettified(self):
+        html = "<div><p>Hello</p><p>World</p></div>"
+        result = self.client._prettify_storage(html)
+        # BeautifulSoup prettify adds newlines around block elements
+        assert result.count("\n") > 1
+
+    def test_returns_string(self):
+        result = self.client._prettify_storage("<p>hi</p>")
+        assert isinstance(result, str)

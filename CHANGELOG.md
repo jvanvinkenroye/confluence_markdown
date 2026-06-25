@@ -2,6 +2,68 @@
 
 All notable changes to this project will be documented in this file.
 
+## [Unreleased] - 2026-06-22
+
+### Added
+
+#### Confluence storage format (XHTML) mode
+
+Support for Confluence **storage format** (Atlassian's official format), the
+lossless XHTML representation used by Confluence's REST API
+(`representation: "storage"`). Unlike Markdown, storage format is a pure
+passthrough: tables with colspan/rowspan, macros (`ac:` elements), layouts,
+and all Confluence-specific constructs are preserved exactly.
+
+See the [Confluence storage format documentation](https://confluence.atlassian.com/doc/confluence-storage-format-790796544.html).
+
+**MCP server — new `*_storage` tool family (recommended for agents):**
+- `get_page_storage` — returns raw storage XHTML (pretty-printed); use as input for the other storage write tools.
+- `edit_page_storage` — replaces page body with storage XHTML; validates well-formedness before upload.
+- `create_page_storage` — creates a new page with storage XHTML content.
+- `add_content_storage` — appends/prepends storage XHTML to an existing page.
+
+All storage write tools preserve the human-in-the-loop elicitation confirmation.
+
+**New diagnostic tool:** `check_elicitation_support` — returns
+`{"elicitation_supported": true/false}` so you can verify at runtime
+whether the connected MCP client will trigger the write confirmation prompt.
+
+The MCP server `instructions` now steer agents toward the `*_storage` tools as
+the preferred choice for content operations.
+
+**New MCP resource:** `confluence://page/{page_id}/storage` — exposes raw
+storage XHTML as an MCP resource.
+
+**CLI:** `--format {md,storage}` flag (default `md`) for `download` and `edit`
+actions. `--format storage` downloads/edits pages in Confluence storage format
+(XHTML, Atlassian's official format) without any Markdown conversion.
+
+**New helpers in `ConfluenceClient`:**
+- `_validate_storage_xhtml(html)` — validates well-formedness, normalises `<br>` and void elements, detects bare `&`; rejects malformed input locally before the API call.
+- `_prettify_storage(html)` — pretty-prints storage XHTML while preserving significant whitespace in `<pre>`, `<ac:plain-text-body>`, and `<ac:plain-text-link-body>`.
+
+### Fixed
+
+- `edit_page_with_editor` with `content_type="html"` (non-interactive mode)
+  previously converted storage XHTML to Markdown and back (`html→md→html`),
+  silently destroying tables and macros. It now validates and uploads the
+  storage XHTML directly.
+
+### Breaking Changes
+
+The following MCP tool names have been renamed with a format suffix to make
+room for the new `*_storage` variants. Update any MCP client configurations
+that reference the old names:
+
+| Old name | New name |
+|---|---|
+| `get_page` | `get_page_md` |
+| `edit_page` | `edit_page_md` |
+| `create_page` | `create_page_md` |
+| `add_content_to_page` | `add_content_md` |
+
+The old names are fully removed; no aliases are provided.
+
 ## [0.1.0] - 2026-02-26
 
 ### Added
