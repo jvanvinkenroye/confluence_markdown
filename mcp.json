@@ -1,0 +1,155 @@
+{
+  "name": "confluence-markdown-mcp",
+  "version": "0.1.0",
+  "description": "Read and write Confluence Data Center pages via Claude with full storage format (XHTML) and markdown support",
+  "author": "Jan Vanvinkenroye",
+  "license": "WTFPL",
+  "homepage": "https://github.com/jvanvinkenroye/confluence_markdown",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/jvanvinkenroye/confluence_markdown"
+  },
+  "keywords": [
+    "confluence",
+    "atlassian",
+    "wiki",
+    "markdown",
+    "mcp",
+    "claude"
+  ],
+  "mcp": {
+    "transport": "stdio",
+    "command": "uv",
+    "args": [
+      "--directory",
+      "{INSTALL_DIR}",
+      "run",
+      "confluence-markdown-mcp"
+    ],
+    "env": {
+      "CONFLUENCE_PROFILE": "default"
+    }
+  },
+  "tools": [
+    {
+      "name": "list_spaces",
+      "description": "List all Confluence spaces accessible by the authenticated user",
+      "category": "navigation"
+    },
+    {
+      "name": "list_recent_pages",
+      "description": "List Confluence pages recently modified by the authenticated user",
+      "category": "navigation"
+    },
+    {
+      "name": "search_pages",
+      "description": "Search Confluence pages via CQL expression or free-text query",
+      "category": "search"
+    },
+    {
+      "name": "list_children",
+      "description": "List direct child pages of a given Confluence page",
+      "category": "navigation"
+    },
+    {
+      "name": "get_page_storage",
+      "description": "Get page content in Confluence storage format (XHTML) — preserves tables, macros, layouts losslessly",
+      "category": "read",
+      "format": "storage"
+    },
+    {
+      "name": "get_page_md",
+      "description": "Get page content converted to Markdown",
+      "category": "read",
+      "format": "markdown"
+    },
+    {
+      "name": "create_page_storage",
+      "description": "Create a new Confluence page with storage format (XHTML) content",
+      "category": "write",
+      "format": "storage",
+      "requiresConfirmation": true
+    },
+    {
+      "name": "create_page_md",
+      "description": "Create a new Confluence page with Markdown content",
+      "category": "write",
+      "format": "markdown",
+      "requiresConfirmation": true
+    },
+    {
+      "name": "edit_page_storage",
+      "description": "Replace page content with storage format (XHTML)",
+      "category": "write",
+      "format": "storage",
+      "requiresConfirmation": true
+    },
+    {
+      "name": "edit_page_md",
+      "description": "Replace page content with Markdown",
+      "category": "write",
+      "format": "markdown",
+      "requiresConfirmation": true
+    },
+    {
+      "name": "add_content_storage",
+      "description": "Append or prepend storage format (XHTML) content to a page",
+      "category": "write",
+      "format": "storage",
+      "requiresConfirmation": true
+    },
+    {
+      "name": "add_content_md",
+      "description": "Append or prepend Markdown content to a page",
+      "category": "write",
+      "format": "markdown",
+      "requiresConfirmation": true
+    },
+    {
+      "name": "check_elicitation_support",
+      "description": "Check whether the connected MCP client supports human-in-the-loop confirmation",
+      "category": "diagnostic"
+    }
+  ],
+  "resources": [
+    {
+      "uri": "confluence://page/{page_id}",
+      "description": "Read a Confluence page as Markdown"
+    },
+    {
+      "uri": "confluence://page/{page_id}/storage",
+      "description": "Read a Confluence page in storage format (XHTML) — lossless"
+    }
+  ],
+  "authentication": {
+    "type": "confluence",
+    "required": true,
+    "instructions": "Save your Confluence credentials using: confluence-markdown --base-url https://your-confluence.com --username YOUR_USERNAME --token YOUR_PAT --save-config --action test-auth",
+    "fields": [
+      {
+        "name": "base_url",
+        "description": "Confluence base URL (e.g., https://confluence.company.com)",
+        "required": true
+      },
+      {
+        "name": "username",
+        "description": "Confluence username",
+        "required": true
+      },
+      {
+        "name": "token",
+        "description": "Confluence Personal Access Token (PAT)",
+        "required": true,
+        "sensitive": true
+      }
+    ]
+  },
+  "capabilities": {
+    "formats": ["storage", "markdown"],
+    "features": {
+      "writeProtection": "elicitation",
+      "caching": true,
+      "rateLimit": true
+    }
+  }
+}
