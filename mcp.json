@@ -19,16 +19,10 @@
   ],
   "mcp": {
     "transport": "stdio",
-    "command": "uv",
+    "command": "uvx",
     "args": [
-      "--directory",
-      "{INSTALL_DIR}",
-      "run",
       "confluence-markdown-mcp"
-    ],
-    "env": {
-      "CONFLUENCE_PROFILE": "default"
-    }
+    ]
   },
   "tools": [
     {
