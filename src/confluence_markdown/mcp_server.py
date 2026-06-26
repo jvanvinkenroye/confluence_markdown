@@ -579,6 +579,94 @@ async def add_content_md(
     })
 
 
+@mcp.tool(annotations=ToolAnnotations(readOnlyHint=False, destructiveHint=True))
+async def move_page(page_url: str, new_parent_id: str, ctx: Context) -> str:
+    """Move a Confluence page to a new parent (change its position in the hierarchy).
+
+    Changes which page a page appears under in the Confluence page tree.
+    Does not modify the page's content, only its parent.
+
+    Args:
+        page_url: URL or ID of the page to move.
+        new_parent_id: ID of the target parent page.
+
+    Returns a JSON object with the moved page's id, title, and url.
+    """
+    client = _get_client()
+    page_id = client._extract_page_id_from_url(page_url)
+    if not page_id:
+        raise ValueError(f"Could not extract page ID from URL: {page_url}")
+
+    # Get page info for confirmation
+    page_data = client.get_page_content(page_id)
+    page_title = page_data.get("title", page_id)
+
+    await _confirm_write(
+        ctx,
+        f"Move page '{page_title}' to parent ID {new_parent_id}"
+    )
+
+    with _silence_stdout():
+        try:
+            result = client.move_page(page_id, new_parent_id)
+        except ConfluenceError as e:
+            raise RuntimeError(str(e)) from e
+
+    return _ok({
+        "id": result["id"],
+        "title": result.get("title"),
+        "url": f"{client.base_url}/pages/viewpage.action?pageId={result['id']}",
+    })
+
+
+@mcp.tool(annotations=ToolAnnotations(readOnlyHint=False, destructiveHint=True))
+async def delete_page(page_url: str, ctx: Context) -> str:
+    """Delete a Confluence page (move it to trash).
+
+    The page can be recovered from trash within a retention period (typically 30 days).
+    If the page has child pages, the children are NOT deleted — they become
+    top-level pages in their respective spaces.
+
+    Args:
+        page_url: URL or ID of the page to delete.
+
+    Returns a JSON object with the deleted page's id and title.
+    """
+    client = _get_client()
+    page_id = client._extract_page_id_from_url(page_url)
+    if not page_id:
+        raise ValueError(f"Could not extract page ID from URL: {page_url}")
+
+    # Get page info for confirmation warning
+    page_data = client.get_page_content(page_id)
+    page_title = page_data.get("title", page_id)
+
+    # Count children for warning
+    try:
+        children = client.list_children(page_url, limit=999)
+        num_children = len(children) if children else 0
+    except Exception:
+        num_children = 0
+
+    warning = f"Delete page '{page_title}'"
+    if num_children > 0:
+        warning += f" (has {num_children} child page(s) — they will become top-level)"
+
+    await _confirm_write(ctx, warning)
+
+    with _silence_stdout():
+        try:
+            client.delete_page(page_id)
+        except ConfluenceError as e:
+            raise RuntimeError(str(e)) from e
+
+    return _ok({
+        "id": page_id,
+        "title": page_title,
+        "status": "deleted (in trash)",
+    })
+
+
 # ── MCP Resources ─────────────────────────────────────────────────────────────
 
 

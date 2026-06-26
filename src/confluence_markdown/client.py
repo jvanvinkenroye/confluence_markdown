@@ -2485,3 +2485,76 @@ More content...
         return asyncio.run(
             self.async_list_children_recursive(page_data["id"], max_depth)
         )
+
+    def move_page(self, page_id: str, new_parent_id: str) -> dict:
+        """
+        Move a page to a new parent (change its position in hierarchy).
+
+        Args:
+            page_id: Confluence page ID to move
+            new_parent_id: Target parent page ID
+
+        Returns:
+            Updated page data
+        """
+        # Get current page metadata
+        url = f"{self.api_base}/content/{page_id}"
+        params = {"expand": "version,space,ancestors"}
+        response = self._request("GET", url, params=params)
+        response.raise_for_status()
+        current = response.json()
+
+        # Build update payload
+        payload = {
+            "id": page_id,
+            "type": "page",
+            "title": current["title"],
+            "space": {"key": current["space"]["key"]},
+            "version": {"number": current["version"]["number"] + 1},
+            "ancestors": [{"id": new_parent_id}],
+        }
+
+        self._debug(
+            f"Moving page {page_id} ('{current['title']}') to parent {new_parent_id}"
+        )
+
+        # Update page with new parent
+        response = self._request("PUT", url, json=payload)
+        response.raise_for_status()
+
+        moved_page = response.json()
+        print("✅ Page moved successfully!")
+        print(f"   Title: {moved_page['title']}")
+        print(f"   New parent ID: {new_parent_id}")
+        print(f"   Page ID: {page_id}")
+
+        return moved_page
+
+    def delete_page(self, page_id: str) -> bool:
+        """
+        Delete a page (moves it to trash).
+
+        Args:
+            page_id: Confluence page ID to delete
+
+        Returns:
+            True if successful
+        """
+        # Get page info for logging
+        url_get = f"{self.api_base}/content/{page_id}"
+        response_get = self._request("GET", url_get)
+        response_get.raise_for_status()
+        page_data = response_get.json()
+
+        self._debug(f"Deleting page {page_id} ('{page_data['title']}')")
+
+        # Delete page
+        response = self._request("DELETE", url_get)
+        response.raise_for_status()
+
+        print("✅ Page deleted successfully!")
+        print(f"   Title: {page_data['title']}")
+        print(f"   Page ID: {page_id}")
+        print("   (Page is in trash and can be recovered)")
+
+        return True

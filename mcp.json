@@ -1,7 +1,7 @@
 {
   "name": "confluence-markdown-mcp",
-  "version": "0.1.0",
-  "description": "Read and write Confluence Data Center pages via Claude with full storage format (XHTML) and markdown support",
+  "version": "0.2.0",
+  "description": "Read, write, delete, and organize Confluence Data Center pages via Claude with full storage format (XHTML) and markdown support",
   "author": "Jan Vanvinkenroye",
   "license": "WTFPL",
   "homepage": "https://github.com/jvanvinkenroye/confluence_markdown",
@@ -103,6 +103,18 @@
       "name": "check_elicitation_support",
       "description": "Check whether the connected MCP client supports human-in-the-loop confirmation",
       "category": "diagnostic"
+    },
+    {
+      "name": "move_page",
+      "description": "Move a page to a new parent (change its position in the hierarchy)",
+      "category": "write",
+      "requiresConfirmation": true
+    },
+    {
+      "name": "delete_page",
+      "description": "Delete a page (move it to trash)",
+      "category": "write",
+      "requiresConfirmation": true
     }
   ],
   "resources": [

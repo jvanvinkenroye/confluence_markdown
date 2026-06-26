@@ -1,56 +1,55 @@
-# v0.1.0 — Initial MCP Release
+# v0.2.0 — Page Organization & Deletion
 
-## ✨ Features
+## ✨ New Features
 
-- **13 MCP Tools** for reading/writing Confluence pages
-- **Dual Format Support:**
-  - `*_storage` tools: Confluence storage format (XHTML) — lossless, preserves tables, macros, layouts
-  - `*_md` tools: Markdown format — human-readable, convenient
-- **Claude Desktop Integration:** Full MCP server support
-- **Claude Code Integration:** Settings-based configuration
-- **Human-in-the-Loop:** Write confirmation support (elicitation)
-- **MCP Resources:** `confluence://page/{page_id}` and `/storage` variants
+- **`move_page` tool** — Reorganize pages by changing their parent in the hierarchy
+- **`delete_page` tool** — Move pages to trash (recoverable within 30 days)
+- **Total: 15 MCP Tools** for complete Confluence workflow
 
-## 🛠️ Tools Included
+## 🛠️ All Tools (15 total)
 
-### Navigation & Search
+### Navigation & Search (4 tools)
 - `list_spaces` — List all accessible Confluence spaces
 - `list_recent_pages` — List recently modified pages
 - `search_pages` — Search by CQL expression or free-text
 - `list_children` — List child pages of a given page
 
-### Read Pages
+### Read Pages (2 tools)
 - `get_page_storage` — Get XHTML (lossless)
 - `get_page_md` — Get Markdown (lossy but readable)
 
-### Create Pages
+### Create Pages (2 tools)
 - `create_page_storage` — Create with XHTML
 - `create_page_md` — Create with Markdown
 
-### Edit Pages
+### Edit Pages (2 tools)
 - `edit_page_storage` — Replace content (XHTML)
 - `edit_page_md` — Replace content (Markdown)
 
-### Add Content
+### Add Content (2 tools)
 - `add_content_storage` — Append/prepend XHTML
 - `add_content_md` — Append/prepend Markdown
 
-### Diagnostic
+### Organize & Delete (2 tools) **NEW**
+- `move_page` — Move a page to a new parent
+- `delete_page` — Delete a page (to trash)
+
+### Diagnostic (1 tool)
 - `check_elicitation_support` — Check client capabilities
 
-## 📚 Documentation
+## 📋 Previous Features (from v0.1.0)
 
-Complete guides available:
-- **Installation:** See README.md
-- **Configuration:** Setup for Claude Desktop & Claude Code
-- **Usage Examples:** How to use tools in Claude
-- **Troubleshooting:** Common issues and solutions
-- **Format Comparison:** When to use storage vs markdown
+- **Dual Format Support:**
+  - `*_storage` tools: Confluence storage format (XHTML) — lossless, preserves tables, macros, layouts
+  - `*_md` tools: Markdown format — human-readable, convenient
+- **Claude Desktop & Code Integration:** Full MCP server support
+- **Human-in-the-Loop:** Write confirmation support (elicitation)
+- **MCP Resources:** `confluence://page/{page_id}` and `/storage` variants
 
 ## 🔐 Security
 
 - **Credentials:** Stored securely in macOS Keychain (or system keyring)
-- **Write Protection:** Human-in-the-loop confirmation for all write operations
+- **Write Protection:** Human-in-the-loop confirmation for all write operations (including move & delete)
 - **No Logging:** Sensitive content never logged to disk
 
 ## 🐛 Known Limitations
@@ -58,16 +57,11 @@ Complete guides available:
 - Some Confluence server versions (older) may reject certain macros with 500 errors
 - Elicitation (write confirmation) not yet supported in all MCP clients
 - Offline mode not supported (requires live Confluence connection)
+- `move_page` changes only parent, not title or content
 
 ## 📦 Installation
 
 ### via uvx (Recommended)
-
-```bash
-uvx --from "git+https://github.com/jvanvinkenroye/confluence_markdown.git[mcp]" confluence-markdown-mcp
-```
-
-### via PyPI (when published)
 
 ```bash
 uvx confluence-markdown-mcp
@@ -81,49 +75,7 @@ cd confluence_markdown
 uv pip install -e ".[mcp]"
 ```
 
-## 🚀 Quick Start
-
-### 1. Configure Credentials
-
-```bash
-confluence-markdown \
-  --base-url https://your-confluence.com \
-  --username your_username \
-  --token your_pat_token \
-  --save-config \
-  --action test-auth
-```
-
-### 2. Configure Claude Desktop
-
-Edit `~/Library/Application Support/Claude/claude_desktop_config.json`:
-
-```json
-{
-  "mcpServers": {
-    "confluence": {
-      "command": "uv",
-      "args": [
-        "--directory",
-        "/path/to/confluence_markdown",
-        "run",
-        "confluence-markdown-mcp"
-      ]
-    }
-  }
-}
-```
-
-Then restart Claude Desktop.
-
-### 3. Start Using
-
-In Claude Desktop, just ask:
-> "List my Confluence spaces"
-> "Create a page about API design in the DOCS space"
-> "Search for deployment guides"
-
-Claude automatically uses the right MCP tools!
+See README.md for detailed setup instructions and configuration for Claude Desktop/Code.
 
 ## 🙏 Thanks
 
