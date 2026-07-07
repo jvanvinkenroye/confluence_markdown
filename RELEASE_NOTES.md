@@ -1,3 +1,23 @@
+# v0.3.0 — Attachment Support
+
+## ✨ New Features
+
+- **`list_attachments` tool** — List attachments of a page (filename, size, media type, version, download URL)
+- **`download_attachment` tool** — Download an attachment to a local file
+- **`upload_attachment` tool** — Upload a local file as an attachment; re-uploading the same filename creates a new attachment version
+- **Total: 18 MCP Tools**
+
+## 📌 Notes
+
+- Uploads require the `X-Atlassian-Token: nocheck` header (handled automatically).
+- On instances where API tokens are restricted to `/rest` paths (e.g. Kantega SSO
+  Enterprise), downloads via `/download/attachments` need that path whitelisted in
+  the SSO admin settings ("API token access" → add `/download/attachments`).
+  The client detects a login redirect and raises a clear error instead of saving
+  an HTML login page.
+
+---
+
 # v0.2.0 — Page Organization & Deletion
 
 ## ✨ New Features

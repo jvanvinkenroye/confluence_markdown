@@ -1,6 +1,6 @@
 {
   "name": "confluence-markdown-mcp",
-  "version": "0.2.1",
+  "version": "0.3.0",
   "description": "Read, write, delete, and organize Confluence Data Center pages via Claude with full storage format (XHTML) and markdown support",
   "author": "Jan Vanvinkenroye",
   "license": "WTFPL",
@@ -113,6 +113,22 @@
     {
       "name": "delete_page",
       "description": "Delete a page (move it to trash)",
+      "category": "write",
+      "requiresConfirmation": true
+    },
+    {
+      "name": "list_attachments",
+      "description": "List the attachments of a page (filename, size, media type, version, download URL)",
+      "category": "read"
+    },
+    {
+      "name": "download_attachment",
+      "description": "Download an attachment from a page to a local file",
+      "category": "read"
+    },
+    {
+      "name": "upload_attachment",
+      "description": "Upload a local file as an attachment to a page (same filename creates a new version)",
       "category": "write",
       "requiresConfirmation": true
     }

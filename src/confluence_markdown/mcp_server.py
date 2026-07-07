@@ -667,6 +667,102 @@ async def delete_page(page_url: str, ctx: Context) -> str:
     })
 
 
+# ── Attachment tools ──────────────────────────────────────────────────────────
+
+
+@mcp.tool(annotations=ToolAnnotations(readOnlyHint=True, destructiveHint=False))
+def list_attachments(page_url: str, limit: int = 50) -> str:
+    """List the attachments of a Confluence page.
+
+    Returns up to `limit` attachments (max 200). Each entry includes id, title
+    (filename), media_type, file_size in bytes, version, and download_url.
+
+    Args:
+        page_url: URL or ID of the page.
+        limit: Maximum number of attachments to return.
+    """
+    client = _get_client()
+    page_id = client._extract_page_id_from_url(page_url)
+    if not page_id:
+        raise ValueError(f"Could not extract page ID from URL: {page_url}")
+    limit = max(1, min(limit, 200))
+    try:
+        results = client.list_attachments(page_id, limit)
+        return _ok(results)
+    except ConfluenceError as e:
+        raise RuntimeError(str(e)) from e
+
+
+@mcp.tool(annotations=ToolAnnotations(readOnlyHint=True, destructiveHint=False))
+def download_attachment(page_url: str, filename: str, output_path: str) -> str:
+    """Download an attachment from a Confluence page to a local file.
+
+    Use list_attachments first to see available filenames.
+
+    Args:
+        page_url: URL or ID of the page.
+        filename: Name of the attachment as returned by list_attachments.
+        output_path: Local file path or directory to save the attachment to.
+
+    Returns a JSON object with the saved file path and size in bytes.
+    """
+    client = _get_client()
+    page_id = client._extract_page_id_from_url(page_url)
+    if not page_id:
+        raise ValueError(f"Could not extract page ID from URL: {page_url}")
+    with _silence_stdout():
+        try:
+            saved = client.download_attachment(page_id, filename, output_path)
+        except ConfluenceError as e:
+            raise RuntimeError(str(e)) from e
+    return _ok({
+        "path": saved,
+        "size": os.path.getsize(saved),
+    })
+
+
+@mcp.tool(annotations=ToolAnnotations(readOnlyHint=False, destructiveHint=True))
+async def upload_attachment(
+    page_url: str, file_path: str, ctx: Context, comment: str = ""
+) -> str:
+    """Upload a local file as an attachment to a Confluence page.
+
+    If an attachment with the same filename already exists on the page,
+    a new version of that attachment is created (the old version remains
+    in the attachment history).
+
+    Args:
+        page_url: URL or ID of the target page.
+        file_path: Local path of the file to upload.
+        comment: Optional version comment for the attachment.
+
+    Returns a JSON object with the attachment's id, title, version, and download_url.
+    """
+    client = _get_client()
+    page_id = client._extract_page_id_from_url(page_url)
+    if not page_id:
+        raise ValueError(f"Could not extract page ID from URL: {page_url}")
+    if not os.path.isfile(file_path):
+        raise ValueError(f"File not found: {file_path}")
+
+    page_data = client.get_page_content(page_id)
+    page_title = page_data.get("title", page_id)
+    filename = os.path.basename(file_path)
+
+    await _confirm_write(
+        ctx,
+        f"Upload attachment '{filename}' to page '{page_title}'"
+    )
+
+    with _silence_stdout():
+        try:
+            result = client.upload_attachment(page_id, file_path, comment)
+        except ConfluenceError as e:
+            raise RuntimeError(str(e)) from e
+
+    return _ok(result)
+
+
 # ── MCP Resources ─────────────────────────────────────────────────────────────
 
 

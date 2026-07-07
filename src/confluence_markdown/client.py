@@ -11,6 +11,7 @@ import shlex
 import shutil
 import subprocess
 import tempfile
+from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
 from urllib.parse import urlparse
 
@@ -30,6 +31,7 @@ from tenacity import (
 )
 
 from .cache import Cache
+from .exceptions import ConfluenceError
 
 logger = logging.getLogger(__name__)
 
@@ -2558,3 +2560,163 @@ More content...
         print("   (Page is in trash and can be recovered)")
 
         return True
+
+    def list_attachments(self, page_id: str, limit: int = 50) -> List[dict]:
+        """
+        List attachments of a page.
+
+        Args:
+            page_id: Confluence page ID
+            limit: Maximum number of attachments to return
+
+        Returns:
+            List of attachment dictionaries with id, title, mediaType,
+            fileSize, version, and download URL
+        """
+        url = f"{self.api_base}/content/{page_id}/child/attachment"
+        params = {"limit": limit, "expand": "version"}
+
+        response = self._request("GET", url, params=params)
+        response.raise_for_status()
+
+        attachments = []
+        for item in response.json().get("results", []):
+            extensions = item.get("extensions", {})
+            attachments.append({
+                "id": item["id"],
+                "title": item["title"],
+                "media_type": extensions.get("mediaType", "unknown"),
+                "file_size": extensions.get("fileSize", 0),
+                "version": item.get("version", {}).get("number"),
+                "download_url": f"{self.base_url}{item['_links']['download']}",
+            })
+
+        self._debug(f"Found {len(attachments)} attachment(s) on page {page_id}")
+        return attachments
+
+    def download_attachment(
+        self, page_id: str, filename: str, output_path: str
+    ) -> str:
+        """
+        Download an attachment from a page to a local file.
+
+        Args:
+            page_id: Confluence page ID
+            filename: Name of the attachment (as shown in list_attachments)
+            output_path: Local file path or directory to save to
+
+        Returns:
+            Path of the saved file
+        """
+        attachments = self.list_attachments(page_id, limit=200)
+        match = next((a for a in attachments if a["title"] == filename), None)
+        if match is None:
+            available = ", ".join(a["title"] for a in attachments) or "(none)"
+            raise ConfluenceError(
+                f"Attachment '{filename}' not found on page {page_id}. "
+                f"Available: {available}"
+            )
+
+        response = self._request("GET", match["download_url"], stream=True)
+
+        # Instances behind SSO/2FA may restrict token auth to /rest/ and
+        # redirect the download servlet to an interactive login page.
+        content_type = response.headers.get("Content-Type", "")
+        login_redirect = "login.action" in response.url or (
+            response.status_code == 200
+            and "text/html" in content_type
+            and match["media_type"] != "text/html"
+        )
+        if response.status_code in (401, 403) or login_redirect:
+            raise ConfluenceError(
+                "Attachment download was rejected by the server "
+                f"(HTTP {response.status_code}). This Confluence instance "
+                "appears to restrict API-token authentication to REST "
+                "endpoints; the /download path requires an interactive "
+                "(SSO/2FA) session. Listing and uploading attachments "
+                "still work."
+            )
+        response.raise_for_status()
+
+        target = Path(output_path)
+        if target.is_dir():
+            target = target / filename
+        target.parent.mkdir(parents=True, exist_ok=True)
+
+        with open(target, "wb") as f:
+            for chunk in response.iter_content(chunk_size=65536):
+                f.write(chunk)
+
+        print("✅ Attachment downloaded successfully!")
+        print(f"   File: {target}")
+        print(f"   Size: {target.stat().st_size} bytes")
+
+        return str(target)
+
+    def upload_attachment(
+        self, page_id: str, file_path: str, comment: str = ""
+    ) -> dict:
+        """
+        Upload a file as an attachment to a page.
+
+        If an attachment with the same filename already exists, a new
+        version of that attachment is created instead.
+
+        Args:
+            page_id: Confluence page ID
+            file_path: Local path of the file to upload
+            comment: Optional version comment
+
+        Returns:
+            Attachment data dictionary with id, title, and download URL
+        """
+        source = Path(file_path)
+        if not source.is_file():
+            raise ConfluenceError(f"File not found: {file_path}")
+
+        filename = source.name
+        existing = self.list_attachments(page_id, limit=200)
+        match = next((a for a in existing if a["title"] == filename), None)
+
+        if match is None:
+            url = f"{self.api_base}/content/{page_id}/child/attachment"
+        else:
+            # Same filename: POST to /data creates a new attachment version
+            url = (
+                f"{self.api_base}/content/{page_id}"
+                f"/child/attachment/{match['id']}/data"
+            )
+
+        # Confluence requires nocheck to bypass XSRF protection on uploads.
+        # Content-Type: None removes the session's JSON default so that
+        # requests can set the correct multipart boundary header itself.
+        headers = {"X-Atlassian-Token": "nocheck", "Content-Type": None}
+        data = {"comment": comment} if comment else {}
+
+        with open(source, "rb") as f:
+            response = self._request(
+                "POST",
+                url,
+                headers=headers,
+                data=data,
+                files={"file": (filename, f)},
+            )
+        response.raise_for_status()
+
+        body = response.json()
+        # Create returns {results: [...]}, update returns the attachment directly
+        item = body["results"][0] if "results" in body else body
+
+        result = {
+            "id": item["id"],
+            "title": item["title"],
+            "version": item.get("version", {}).get("number"),
+            "download_url": f"{self.base_url}{item['_links']['download']}",
+        }
+
+        action = "updated" if match else "uploaded"
+        print(f"✅ Attachment {action} successfully!")
+        print(f"   File: {filename}")
+        print(f"   Attachment ID: {result['id']}")
+
+        return result
