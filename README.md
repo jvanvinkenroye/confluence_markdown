@@ -642,6 +642,18 @@ Operations like `create_page_md` and `edit_page_md` trigger write confirmation i
 
 ---
 
+## Claude Code Skill: confluence-page-styling
+
+The repository ships a [Claude Code skill](https://code.claude.com/docs/en/skills) at `skills/confluence-page-styling/` that teaches Claude how to create and style Confluence pages via this MCP server: page hierarchies, storage-format macros (panels, TOC, code blocks, status lozenges, children macro), tables, and XHTML escaping rules.
+
+Install by copying it into your skills directory:
+
+```bash
+cp -R skills/confluence-page-styling ~/.claude/skills/
+```
+
+Then ask Claude things like *"document this project in space X"* or invoke it directly with `/confluence-page-styling`. A packaged `.skill` archive can be built with the skill-creator packaging script or found in `dist/` after a release build.
+
 ## Requirements
 
 - Python 3.10+
