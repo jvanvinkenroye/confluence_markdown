@@ -537,6 +537,29 @@ The server exposes two content tool families (see [Page formats](#page-formats-m
 | `create_page_md` | Create a page with Markdown content |
 | `add_content_md` | Append/prepend Markdown content to a page |
 
+**Organize & delete** (require confirmation via elicitation):
+
+| Tool | Description |
+|------|-------------|
+| `move_page` | Move a page to a new parent (change its position in the hierarchy) |
+| `delete_page` | Delete a page — goes to trash, recoverable; children become top-level |
+
+**Attachments:**
+
+| Tool | Description |
+|------|-------------|
+| `list_attachments` | List attachments of a page (filename, size, media type, version, download URL) |
+| `download_attachment` | Download an attachment to a local file |
+| `upload_attachment` | Upload a local file as an attachment; same filename creates a new version (requires confirmation) |
+
+> **Note for SSO-protected instances (e.g. Kantega SSO Enterprise):** API tokens
+> are typically limited to `/rest` paths, so attachment downloads via
+> `/download/attachments` are redirected to the login page. An administrator can
+> whitelist the path under *Kantega SSO → API token access → API Tokens paths*
+> (add `/download/attachments`). The client detects this and raises a clear
+> error instead of saving an HTML login page. Listing and uploading attachments
+> use `/rest` endpoints and always work.
+
 **Diagnostic:**
 
 | Tool | Description |

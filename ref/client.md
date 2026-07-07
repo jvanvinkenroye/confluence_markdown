@@ -49,6 +49,19 @@ ConfluenceClient(
 | `create_page_with_editor(space_key, title, parent_url, content)` | `dict \| None` | Create then edit |
 | `create_task_page(space_key, title, category, priority, status, parent_id)` | `dict` | Task template |
 
+### Organize / delete
+| Method | Returns | Notes |
+|--------|---------|-------|
+| `move_page(page_id, new_parent_id)` | `dict` | PUT with updated `ancestors`, increments version |
+| `delete_page(page_id)` | `bool` | DELETE — page goes to trash (recoverable) |
+
+### Attachments
+| Method | Returns | Notes |
+|--------|---------|-------|
+| `list_attachments(page_id, limit=50)` | `list[dict]` | id, title, media_type, file_size, version, download_url |
+| `download_attachment(page_id, filename, output_path)` | `str` | Streams to file; detects SSO login redirects and raises `ConfluenceError` (Kantega SSO: `/download/attachments` must be whitelisted for API tokens) |
+| `upload_attachment(page_id, file_path, comment="")` | `dict` | Multipart POST with `X-Atlassian-Token: nocheck`; same filename → new attachment version |
+
 ### Download
 | Method | Returns | Notes |
 |--------|---------|-------|
