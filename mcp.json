@@ -21,6 +21,8 @@
     "transport": "stdio",
     "command": "uvx",
     "args": [
+      "--from",
+      "confluence-markdown[mcp]",
       "confluence-markdown-mcp"
     ]
   },

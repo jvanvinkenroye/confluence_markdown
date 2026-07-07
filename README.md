@@ -465,7 +465,28 @@ Then **restart Claude Desktop** (⌘Q and reopen).
 
 ### Configure Claude Code
 
-Edit `~/.claude/settings.json`:
+Edit `~/.claude/settings.json`. Recommended (installs from PyPI, no local checkout needed):
+
+```json
+{
+  "mcpServers": {
+    "confluence": {
+      "command": "uvx",
+      "args": [
+        "--from",
+        "confluence-markdown[mcp]",
+        "confluence-markdown-mcp"
+      ]
+    }
+  }
+}
+```
+
+Note: the PyPI package is named `confluence-markdown` (the `[mcp]` extra pulls in
+the MCP SDK); `confluence-markdown-mcp` is the command inside it, so plain
+`uvx confluence-markdown-mcp` will NOT work.
+
+Alternative with a local checkout:
 
 ```json
 {
