@@ -1,6 +1,6 @@
 {
   "name": "confluence-markdown-mcp",
-  "version": "0.3.0",
+  "version": "0.3.1",
   "description": "Read, write, delete, and organize Confluence Data Center pages via Claude with full storage format (XHTML) and markdown support",
   "author": "Jan Vanvinkenroye",
   "license": "WTFPL",

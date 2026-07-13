@@ -1,3 +1,17 @@
+# v0.3.1 — Encoding Fix & Test Coverage
+
+## 🐛 Fixes
+
+- **Attachment comments are now sent as UTF-8 multipart parts** — umlauts and
+  other non-ASCII characters in upload comments no longer arrive garbled.
+
+## 🧪 Tests
+
+- New test coverage for the async batch methods, 429 rate-limit handling,
+  and the keyring/plaintext fallback path (33 new tests, 134 total).
+
+---
+
 # v0.3.0 — Attachment Support
 
 ## ✨ New Features
