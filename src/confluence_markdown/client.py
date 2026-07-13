@@ -2691,15 +2691,23 @@ More content...
         # Content-Type: None removes the session's JSON default so that
         # requests can set the correct multipart boundary header itself.
         headers = {"X-Atlassian-Token": "nocheck", "Content-Type": None}
-        data = {"comment": comment} if comment else {}
 
         with open(source, "rb") as f:
+            # The comment must be a multipart part with an explicit
+            # charset: sent as a plain form field (data=), Confluence DC
+            # decodes it as ISO-8859-1 and mangles non-ASCII characters.
+            files = {"file": (filename, f)}
+            if comment:
+                files["comment"] = (
+                    None,
+                    comment.encode("utf-8"),
+                    "text/plain; charset=utf-8",
+                )
             response = self._request(
                 "POST",
                 url,
                 headers=headers,
-                data=data,
-                files={"file": (filename, f)},
+                files=files,
             )
         response.raise_for_status()
 
