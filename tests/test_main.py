@@ -36,8 +36,12 @@ class TestConfigManager:
             config.config_file = Path(tmpdir) / "config.json"
             assert config.list_profiles() == []
 
-    def test_save_and_load_config(self):
+    def test_save_and_load_config(self, monkeypatch):
         """Test saving and loading configuration."""
+        # Force the plaintext path so the test never touches the real keychain
+        import confluence_markdown.config as config_mod
+        monkeypatch.setattr(config_mod, "_KEYRING_AVAILABLE", False)
+
         with tempfile.TemporaryDirectory() as tmpdir:
             config = ConfigManager()
             config.config_dir = Path(tmpdir)
