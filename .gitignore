@@ -56,3 +56,6 @@ setup_*.py
 fix_*.py
 update_*.py
 convert_*.py
+
+# macOS
+.DS_Store
