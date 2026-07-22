@@ -290,7 +290,7 @@ def load_credentials(args: argparse.Namespace, config_manager: ConfigManager) ->
     if not args.base_url:
         args.base_url = input("Confluence base URL: ").strip() or None
 
-    if not args.username:
+    if not args.username and not args.token:
         username = input(
             "Username (leave blank to use bearer token authentication): "
         ).strip()
